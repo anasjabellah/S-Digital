@@ -1,0 +1,70 @@
+spring:
+  application:
+    name: s-digital-platform
+
+  datasource:
+    # Override these with environment variables outside local development.
+    # The fallbacks below are local dev credentials only (see docker-compose.yml).
+    url: ${DB_URL:jdbc:postgresql://localhost:25432/sdigital}
+    username: ${DB_USERNAME:sdigital}
+    password: ${DB_PASSWORD:sdigital}
+
+  jpa:
+    # Flyway is the single source of truth for the schema.
+    # Hibernate only validates that the mapping matches the migrated schema.
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  data:
+    web:
+      pageable:
+        default-page-size: 20
+        # Cap the page size to protect the API from excessive requests.
+        max-page-size: 100
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+
+# --- Security -----------------------------------------------------------------
+# The API is an OAuth2 resource server that validates Keycloak-issued JWTs.
+#
+# KEYCLOAK_ISSUER_URI: realm issuer of your Keycloak instance, for example
+#   KEYCLOAK_ISSUER_URI=http://localhost:8180/realms/s-digital
+# When it is not set (default), the application still starts but rejects every
+# bearer token (business endpoints answer 401). This keeps local development and
+# the tests independent of a running Keycloak; override it to enable auth.
+#
+# SDIGITAL_CORS_ALLOWED_ORIGINS: comma-separated list of allowed browser origins
+#   (never "*"), for example:
+#   SDIGITAL_CORS_ALLOWED_ORIGINS=http://localhost:5173,https://app.s-digital.io
+# Empty by default: no cross-origin request is allowed.
+#
+# KEYCLOAK_CLIENT_ROLE_IDS: comma-separated client ids whose Keycloak client roles
+#   (resource_access.<client-id>.roles) are trusted and mapped to authorities. Realm
+#   roles (realm_access.roles) are always mapped. Roles of clients not listed here are
+#   ignored, so a token cannot gain authorities from an unrelated client.
+#   Example: KEYCLOAK_CLIENT_ROLE_IDS=s-digital-api,another-client
+sdigital:
+  security:
+    keycloak:
+      issuer-uri: ${KEYCLOAK_ISSUER_URI:}
+      client-role-ids: ${KEYCLOAK_CLIENT_ROLE_IDS:s-digital-api}
+    cors:
+      allowed-origins: ${SDIGITAL_CORS_ALLOWED_ORIGINS:}

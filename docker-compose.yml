@@ -1,0 +1,51 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: sdigital-postgres
+    environment:
+      POSTGRES_DB: sdigital
+      POSTGRES_USER: sdigital
+      POSTGRES_PASSWORD: sdigital
+    ports:
+      # Host port 25432 avoids conflicts with local PostgreSQL instances
+      # (native v17/v18 and a WSL instance) that squat the usual 5432-5434 range.
+      - "25432:5432"
+    volumes:
+      - sdigital-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sdigital -d sdigital"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Local Keycloak identity provider (development only).
+  #
+  # Runs in dev mode with its own embedded H2 database: it is fully isolated from the
+  # PostgreSQL service above (no existing service or data is affected). The dev realm,
+  # the public test client and the non-privileged test user are imported at startup from
+  # ./keycloak/import. No production secret is stored: the test user's password comes from
+  # the KC_TEST_USER_PASSWORD environment variable (see defaults below, local-only).
+  #
+  # The issuer is pinned to http://localhost:8180 so the JWT 'iss' claim exactly matches
+  # KEYCLOAK_ISSUER_URI used by the API.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.5.2
+    container_name: sdigital-keycloak
+    command: ["start-dev", "--import-realm"]
+    environment:
+      # Bootstrap admin of the local instance (local-only defaults, override via env).
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:-admin}
+      # Resolved by the ${KC_TEST_USER_PASSWORD} placeholder in the realm import.
+      KC_TEST_USER_PASSWORD: ${KC_TEST_USER_PASSWORD:-dev-password}
+      # Deterministic issuer host/port: must match KEYCLOAK_ISSUER_URI of the API.
+      KC_HOSTNAME: http://localhost:8180
+      KC_HTTP_ENABLED: "true"
+    ports:
+      - "8180:8080"
+    volumes:
+      # Read-only realm import consumed by "start-dev --import-realm".
+      - ./keycloak/import:/opt/keycloak/data/import:ro
+
+volumes:
+  sdigital-pgdata:
