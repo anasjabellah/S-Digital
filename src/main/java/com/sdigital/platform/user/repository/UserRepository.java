@@ -2,6 +2,7 @@ package com.sdigital.platform.user.repository;
 
 import com.sdigital.platform.user.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.stereotype.Repository;
 
 import java.util.Optional;
@@ -11,7 +12,7 @@ import java.util.UUID;
  * Spring Data JPA repository for {@link User}.
  */
 @Repository
-public interface UserRepository extends JpaRepository<User, UUID> {
+public interface UserRepository extends JpaRepository<User, UUID>, JpaSpecificationExecutor<User> {
 
     Optional<User> findByEmail(String email);
 

@@ -1,0 +1,47 @@
+## Étape 2B.1 — Revue de sécurité ciblée (sans refactoring)
+
+### 1. Fichiers examinés
+- `src/main/java/com/sdigital/platform/common/security/KeycloakIdentityResolver.java` (créé étape 2B)
+- `src/main/java/com/sdigital/platform/user/service/UserIdentityService.java` (créé étape 2B)
+- `src/test/java/com/sdigital/platform/user/service/UserIdentityServiceTest.java` (créé étape 2B)
+
+### 2. Vérifications point par point
+
+1. **Résolution uniquement via `sub` (pas d’email)**
+   - `KeycloakIdentityResolver.getCurrentKeycloakSub()` lit uniquement `jwtToken.getToken().getClaim("sub")`. Aucun autre claim utilisé.
+   - `UserIdentityService.findLocalUserByKeycloakSub()` appelle `userRepository.findByKeycloakId(trimmed)` uniquement. Aucune recherche par email.
+   → Conforme.
+
+2. **Authentification absente/anonyme, `sub` absent/vide/espaces**
+   - Auth null → `Optional.empty()`. Anonyme (`AnonymousAuthenticationToken`) → `Optional.empty()`. Non-JWT → `Optional.empty()`.
+   - `sub` non-String, vide/espaces (trim + `StringUtils.hasText`) → `Optional.empty()`.
+   Tests couvrent ces cas. → Conforme.
+
+3. **`getCurrentKeycloakSubOrThrow()` lève exception adaptée/prévisible**
+   - Délègue à `getCurrentKeycloakSub()`, lève `IllegalStateException` avec message générique ne contenant ni JWT ni claims. → Conforme.
+
+4. **Utilisateur `INACTIVE` identifié mais jamais autorisé implicitement**
+   - `resolveCurrentLocalUser()` retourne l’utilisateur lié même s’il est INACTIVE.
+   - `isCurrentUserActiveLinked()` filtre explicitement `UserStatus.ACTIVE`.
+   → Conforme.
+
+5. **Retourne uniquement l’utilisateur lié au `sub` courant**
+   - Recherche uniquement par `keycloakId == sub`. Test avec plusieurs utilisateurs confirme isolation. → Conforme.
+
+6. **Conflit d’unicité `keycloakId` (UK)**
+   - Schéma `uk_app_user_keycloak_id UNIQUE` existe ; repo expose `existsByKeycloakId`. Aucun test d’écriture force la violation ici (service read-only). Recommandation : test JPA/Testcontainers lors d’une future liaison. → Couverture lecture OK ; risque faible.
+
+7. **Exceptions/logs sans divulgation de JWT/données sensibles**
+   - Aucun log dans les classes créées. Messages d’exception génériques. → Conforme.
+
+### 3. Fichiers modifiés
+Aucun. Les 3 fichiers sont créés uniquement.
+
+### 4. Tests exécutés
+`mvn test` (Java 21) → **81 tests, 0 échecs, BUILD SUCCESS** (UserIdentityServiceTest 7 tests inclus).
+
+### 5. Risques résiduels
+Faible : absence de test d’intégration validant violation UNIQUE `keycloakId` en écriture (non introduit ici).
+
+### 6. Confirmation
+**Aucun élargissement des règles d’accès existantes.** Pas de modification de `SecurityConfig`, endpoints REST, UserService, DTOs, migrations. Service read-only, pas d’auto-provisioning, pas de rapprochement par email.

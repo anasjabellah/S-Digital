@@ -19,6 +19,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 
 import java.time.Instant;
 import java.util.List;
@@ -28,6 +29,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -167,6 +169,41 @@ class UserServiceTest {
     }
 
     @Test
+    void activateRestoresStatusActiveAndPreservesOtherFields() {
+        UUID id = UUID.randomUUID();
+        Instant createdAt = Instant.parse("2026-01-01T10:00:00Z");
+        Instant updatedAt = Instant.parse("2026-01-02T10:00:00Z");
+        User user = UserTestData.user(id, "alice@example.com", "Alice", "Doe", "kc-1", createdAt, updatedAt);
+        user.setStatus(UserStatus.INACTIVE);
+        when(userRepository.findById(id)).thenReturn(Optional.of(user));
+        when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        UserResponse response = userService.activate(id);
+
+        assertThat(response.status()).isEqualTo(UserStatus.ACTIVE);
+        assertThat(response.id()).isEqualTo(id);
+        assertThat(response.email()).isEqualTo("alice@example.com");
+        assertThat(response.firstName()).isEqualTo("Alice");
+        assertThat(response.lastName()).isEqualTo("Doe");
+        assertThat(response.createdAt()).isEqualTo(createdAt);
+        assertThat(response.updatedAt()).isEqualTo(updatedAt);
+        assertThat(user.getKeycloakId()).isEqualTo("kc-1");
+        verify(userRepository).save(user);
+        verify(userRepository, never()).deleteById(any(UUID.class));
+    }
+
+    @Test
+    void activateThrowsWhenUserDoesNotExist() {
+        UUID id = UUID.randomUUID();
+        when(userRepository.findById(id)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> userService.activate(id))
+                .isInstanceOf(UserNotFoundException.class);
+
+        verify(userRepository, never()).save(any(User.class));
+    }
+
+    @Test
     void getAllReturnsMappedPage() {
         User user = UserTestData.user(UUID.randomUUID(), "alice@example.com", "Alice", "Doe", null, Instant.now(), Instant.now());
         Pageable pageable = PageRequest.of(0, 10);
@@ -177,5 +214,64 @@ class UserServiceTest {
         assertThat(page.getTotalElements()).isEqualTo(1);
         assertThat(page.getContent()).hasSize(1);
         assertThat(page.getContent().get(0).email()).isEqualTo("alice@example.com");
+    }
+
+    @Test
+    void getAllWithoutFiltersKeepsTheUnfilteredQuery() {
+        Pageable pageable = PageRequest.of(0, 10);
+        when(userRepository.findAll(pageable)).thenReturn(new PageImpl<>(List.of(), pageable, 0));
+
+        userService.getAll(null, null, pageable);
+
+        verify(userRepository).findAll(pageable);
+        verify(userRepository, never()).findAll(any(Specification.class), any(Pageable.class));
+    }
+
+    @Test
+    void getAllTreatsBlankSearchAsAbsent() {
+        Pageable pageable = PageRequest.of(0, 10);
+        when(userRepository.findAll(pageable)).thenReturn(new PageImpl<>(List.of(), pageable, 0));
+
+        userService.getAll("   ", null, pageable);
+
+        verify(userRepository).findAll(pageable);
+        verify(userRepository, never()).findAll(any(Specification.class), any(Pageable.class));
+    }
+
+    @Test
+    void getAllWithSearchUsesTheFilteredQuery() {
+        Pageable pageable = PageRequest.of(0, 10);
+        User user = UserTestData.user(UUID.randomUUID(), "alice@example.com", "Alice", "Doe", null, Instant.now(), Instant.now());
+        when(userRepository.findAll(any(Specification.class), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(user), pageable, 1));
+
+        Page<UserResponse> page = userService.getAll("alice", null, pageable);
+
+        assertThat(page.getContent()).hasSize(1);
+        assertThat(page.getContent().get(0).email()).isEqualTo("alice@example.com");
+        verify(userRepository, never()).findAll(pageable);
+    }
+
+    @Test
+    void getAllWithStatusOnlyUsesTheFilteredQuery() {
+        Pageable pageable = PageRequest.of(0, 10);
+        when(userRepository.findAll(any(Specification.class), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(), pageable, 0));
+
+        userService.getAll(null, UserStatus.INACTIVE, pageable);
+
+        verify(userRepository).findAll(any(Specification.class), eq(pageable));
+    }
+
+    @Test
+    void getAllCombinesSearchAndStatus() {
+        Pageable pageable = PageRequest.of(0, 10);
+        when(userRepository.findAll(any(Specification.class), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(), pageable, 0));
+
+        userService.getAll("  doe ", UserStatus.ACTIVE, pageable);
+
+        verify(userRepository).findAll(any(Specification.class), eq(pageable));
+        verify(userRepository, never()).findAll(pageable);
     }
 }

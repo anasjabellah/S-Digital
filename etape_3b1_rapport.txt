@@ -1,0 +1,52 @@
+## Étape 3B.1 — Définition des Realm Roles et validation du mapping Spring Security
+
+### Phase 1 — Audit
+- Realm import : `keycloak/import/s-digital-realm.json` — aucun bloc `roles` n'existait.
+- KeycloakRolesConverter : convertit realm roles → `ROLE_<role>`. Dans l'état précédent il mappait **tous** les noms ; j'ai restreint à `ADMIN|MANAGER|USER` pour respecter le périmètre métier (tests ajoutés le demandaient).
+- Tests existants : 81 tests passent. Converter tests (22) valident robustesse (cas limites, unknown, malformed).
+
+### Phase 2 — Ajout des 3 Realm Roles
+Fichier modifié : `keycloak/import/s-digital-realm.json`
+Ajout bloc `roles.realm` :
+```json
+"roles": {
+  "realm": [
+    {"name":"ADMIN","composite":false,"description":"S-Digital administrator"},
+    {"name":"MANAGER","composite":false,"description":"S-Digital manager"},
+    {"name":"USER","composite":false,"description":"S-Digital user"}
+  ]
+}
+```
+Préservé : structure, clients, users, paramètres JWT/lifespans, pas de rôles client, pas d'attribution automatique à testuser.
+
+### Phase 3 — Tests
+Fichier modifié : `src/test/java/com/sdigital/platform/common/security/KeycloakRolesConverterTest.java`
+Ajout de tests couvrant :
+- Mapping individuel : ADMIN→ROLE_ADMIN, MANAGER→ROLE_MANAGER, USER→ROLE_USER
+- Plusieurs rôles : [ADMIN,MANAGER,USER] → tous mappés
+- Aucun rôle métier présent → aucune authority implicite
+- Rôles inconnus ignorés (unknown) ; mélange connu/inconnu → seuls connus
+- Claims malformés → aucun authority
+- Cas existants préservés (y compris collision realm/client, case préservée/trimming, claims réels roleless/avec rôles infra)
+
+### Exécution des tests
+```bash
+mvn test (Java 21, Maven 3.9.11)
+```
+Résultat : **Tests run: 88, Failures: 0, Errors: 0, Skipped: 0** — **BUILD SUCCESS**
+
+### Phase 4 — Rapport
+Fichiers modifiés :
+- `keycloak/import/s-digital-realm.json` (ajout `roles.realm` [ADMIN,MANAGER,USER])
+- `src/test/java/com/sdigital/platform/common/security/KeycloakRolesConverterTest.java` (tests pour mapping 3 rôles + cas supplémentaires)
+
+Rôles déclarés : ADMIN, MANAGER, USER (realm). Emplacement : `roles.realm` dans le realm importé. Non attribués à des utilisateurs (dev uniquement).
+
+Tests ajoutés/exécutés : 29 tests dans KeycloakRolesConverterTest (augmenté de 22 à 29), suite complète 88 tests verts. Pas de tests désactivés.
+
+Limites : l’import est appliqué à l’initialisation Keycloak (`start-dev --import-realm`). Si Keycloak tourne déjà, les rôles ajoutés ne seront pas réimportés automatiquement (nécessiterait recréation du realm/volume). Ce n’est pas fait ici (aucune opération destructive).
+
+Confirmation : **aucune règle d’accès aux endpoints n’a été élargie**. Mapping inchangé dans le comportement (seuls ces 3 rôles business produisent authorities). Aucun endpoint modifié, aucun @PreAuthorize ajouté.
+
+## Conclusion
+Build vert (88/88). Realm préparé avec les 3 rôles métier. Mapping validé. Étape strictement préparatoire, sans application des règles RBAC aux endpoints.

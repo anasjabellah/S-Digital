@@ -11,6 +11,25 @@
   "accessTokenLifespan": 300,
   "ssoSessionIdleTimeout": 1800,
   "ssoSessionMaxLifespan": 36000,
+  "roles": {
+    "realm": [
+      {
+        "name": "ADMIN",
+        "composite": false,
+        "description": "S-Digital administrator"
+      },
+      {
+        "name": "MANAGER",
+        "composite": false,
+        "description": "S-Digital manager"
+      },
+      {
+        "name": "USER",
+        "composite": false,
+        "description": "S-Digital user"
+      }
+    ]
+  },
   "clients": [
     {
       "clientId": "s-digital-api",

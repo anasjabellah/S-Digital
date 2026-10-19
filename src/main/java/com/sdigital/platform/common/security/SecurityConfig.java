@@ -1,5 +1,6 @@
 package com.sdigital.platform.common.security;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -10,9 +11,11 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.intercept.AuthorizationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import com.sdigital.platform.user.service.UserIdentityService;
 
 import java.util.Arrays;
 import java.util.List;
@@ -46,35 +49,66 @@ public class SecurityConfig {
 
     private final String allowedOrigins;
     private final JwtAuthenticationConverter jwtAuthenticationConverter;
+    private final UserIdentityService userIdentityService;
 
     public SecurityConfig(@Value("${sdigital.security.cors.allowed-origins:}") String allowedOrigins,
-                          JwtAuthenticationConverter jwtAuthenticationConverter) {
+                          JwtAuthenticationConverter jwtAuthenticationConverter,
+                          UserIdentityService userIdentityService) {
         this.allowedOrigins = allowedOrigins;
         this.jwtAuthenticationConverter = jwtAuthenticationConverter;
+        this.userIdentityService = userIdentityService;
     }
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityErrorResponseWriter securityErrorResponseWriter(ObjectMapper objectMapper) {
+        return new SecurityErrorResponseWriter(objectMapper);
+    }
+
+    @Bean
+    public SecurityFilterChain securityFilterChain(HttpSecurity http,
+                                                   SecurityErrorResponseWriter errorResponseWriter) throws Exception {
         http
-                // The API is stateless and authenticated per request with a bearer JWT,
-                // so there is no session cookie for CSRF to protect. Disabling it is a
-                // deliberate consequence of the stateless architecture, not a blanket choice.
                 .csrf(csrf -> csrf.disable())
                 .cors(Customizer.withDefaults())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(requests -> requests
                         // CORS preflight requests never carry credentials and must not be blocked.
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                        // Health probe consumed by the infrastructure (Docker, orchestrators).
+                        // Health probe consumed by the infrastructure (Docker, orchestrator).
                         .requestMatchers(HttpMethod.GET, "/actuator/health", "/actuator/health/**").permitAll()
                         // OpenAPI document and Swagger UI remain browsable without a token.
                         .requestMatchers(PUBLIC_DOCUMENTATION_ENDPOINTS).permitAll()
-                        // Business API requires a valid Keycloak JWT.
+                        // RBAC (step 3B.3): user management is restricted to business realm roles,
+                        // mapped by KeycloakRolesConverter as ROLE_ADMIN / ROLE_MANAGER / ROLE_USER.
+                        // Reads are shared by ADMIN and MANAGER; every write is ADMIN only.
+                        // These rules are evaluated by the AuthorizationFilter, which runs *after*
+                        // LocalUserActiveGuardFilter, so a missing or INACTIVE local identity is
+                        // always refused first, even for an ADMIN token.
+                        .requestMatchers(HttpMethod.GET, "/api/v1/users", "/api/v1/users/{id}")
+                                .hasAnyRole("ADMIN", "MANAGER")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/users").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.PUT, "/api/v1/users/{id}").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.DELETE, "/api/v1/users/{id}").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/users/{id}/activate").hasRole("ADMIN")
+                        // Any other business route still requires a valid JWT (and, through the
+                        // guard above, a linked + ACTIVE local identity) until its own RBAC rule
+                        // is defined for a route that actually exists.
                         .requestMatchers("/api/v1/**").authenticated()
                         // Explicit, secure default: no anonymous access to anything else.
                         .anyRequest().denyAll())
-                // Validate incoming bearer tokens as JWTs and derive authorities from Keycloak
-                // roles (realm + trusted client roles), never from OAuth2 scopes.
+                // Role-based refusals reuse the same JSON body as the identity guard. Missing or
+                // invalid authentication still goes through the resource-server entry point (401).
+                .exceptionHandling(exceptions -> exceptions.accessDeniedHandler(
+                        (request, response, accessDeniedException) ->
+                                errorResponseWriter.writeForbidden(response)))
+                // Runs after the OAuth2 resource-server filter (BearerTokenAuthenticationFilter)
+                // has populated the SecurityContext with a validated JWT, and before the
+                // authorization filter. Requests without a token (or with an invalid token)
+                // never reach this guard: they are rejected by the resource server with 401.
+                // Only a successfully authenticated JWT identity is evaluated for the
+                // local linked + ACTIVE requirement.
+                .addFilterBefore(new LocalUserActiveGuardFilter(userIdentityService, errorResponseWriter),
+                        AuthorizationFilter.class)
                 .oauth2ResourceServer(resourceServer -> resourceServer.jwt(
                         jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter)));
         return http.build();

@@ -40,7 +40,13 @@ management:
         include: health,info
   endpoint:
     health:
-      show-details: always
+      # The health probe is reachable anonymously (see SecurityConfig). Component
+      # details would disclose infrastructure information (database product,
+      # absolute filesystem paths, free disk space, TLS certificate chains), so
+      # only the aggregate status is exposed. Details can still be enabled locally
+      # when debugging, for example with
+      # MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS=always.
+      show-details: never
 
 # --- Security -----------------------------------------------------------------
 # The API is an OAuth2 resource server that validates Keycloak-issued JWTs.

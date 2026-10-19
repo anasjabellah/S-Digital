@@ -102,6 +102,10 @@ public class KeycloakRolesConverter implements Converter<Jwt, Collection<Granted
         Object realmAccess = jwt.getClaim(REALM_ACCESS_CLAIM);
         if (realmAccess instanceof Map<?, ?> realmAccessMap) {
             for (String role : extractRoleNames(realmAccessMap.get(ROLES_CLAIM))) {
+                // Every realm role is mapped with the ROLE_ prefix. The authorization rules of
+                // SecurityConfig only reference the business roles ADMIN, MANAGER and USER
+                // (declared in the imported Keycloak realm); any other realm role simply never
+                // matches a rule, so mapping it cannot grant access on its own.
                 authorities.add(new SimpleGrantedAuthority(REALM_ROLE_PREFIX + role));
             }
         }

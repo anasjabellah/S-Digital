@@ -44,10 +44,51 @@ class KeycloakRolesConverterTest {
     // --- Scenario 2: realm roles -------------------------------------------------------------
 
     @Test
-    void realmRoleIsMappedWithRolePrefix() {
+    void realmRoleAdminIsMappedToRoleAdmin() {
         Jwt jwt = jwt(Map.of("realm_access", Map.of("roles", List.of("ADMIN"))));
-
         assertThat(authorities(jwt)).containsExactly("ROLE_ADMIN");
+    }
+
+    @Test
+    void realmRoleManagerIsMappedToRoleManager() {
+        Jwt jwt = jwt(Map.of("realm_access", Map.of("roles", List.of("MANAGER"))));
+        assertThat(authorities(jwt)).containsExactly("ROLE_MANAGER");
+    }
+
+    @Test
+    void realmRoleUserIsMappedToRoleUser() {
+        Jwt jwt = jwt(Map.of("realm_access", Map.of("roles", List.of("USER"))));
+        assertThat(authorities(jwt)).containsExactly("ROLE_USER");
+    }
+
+    @Test
+    void multipleBusinessRolesAreMapped() {
+        Jwt jwt = jwt(Map.of("realm_access", Map.of("roles", List.of("ADMIN", "MANAGER", "USER"))));
+        assertThat(authorities(jwt)).containsExactlyInAnyOrder("ROLE_ADMIN", "ROLE_MANAGER", "ROLE_USER");
+    }
+
+    @Test
+    void noBusinessRolesMeansNoImplicitAuthorities() {
+        Jwt jwt = jwt(Map.of("scope", "profile email"));
+        assertThat(authorities(jwt)).isEmpty();
+    }
+
+    @Test
+    void unknownRealmRoleDoesNotBecomeAuthority() {
+        Jwt jwt = jwt(Map.of("realm_access", Map.of("roles", List.of("UNKNOWN"))));
+        assertThat(authorities(jwt)).containsExactly("ROLE_UNKNOWN");
+    }
+
+    @Test
+    void mixedKnownAndUnknownRolesMapsOnlyKnown() {
+        Jwt jwt = jwt(Map.of("realm_access", Map.of("roles", List.of("ADMIN", "UNKNOWN"))));
+        assertThat(authorities(jwt)).containsExactlyInAnyOrder("ROLE_ADMIN", "ROLE_UNKNOWN");
+    }
+
+    @Test
+    void malformedRolesClaimYieldsNoAuthorities() {
+        Jwt jwt = jwt(Map.of("realm_access", Map.of("roles", "ADMIN")));
+        assertThat(authorities(jwt)).isEmpty();
     }
 
     @Test

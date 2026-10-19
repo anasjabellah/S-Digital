@@ -10,7 +10,11 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -38,6 +42,21 @@ class PublicEndpointsSecurityTest {
     void actuatorHealthIsAccessibleAnonymously() throws Exception {
         mockMvc.perform(get("/actuator/health"))
                 .andExpect(status().isOk());
+    }
+
+    /**
+     * The health probe is public: it must stay reachable, but it must not become an anonymous
+     * source of infrastructure details (database product, absolute filesystem paths, free disk
+     * space, TLS certificate chains). Only the aggregate status may be exposed.
+     */
+    @Test
+    void actuatorHealthDoesNotDiscloseInternalDetailsAnonymously() throws Exception {
+        mockMvc.perform(get("/actuator/health"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UP"))
+                .andExpect(jsonPath("$.components").doesNotExist())
+                .andExpect(content().string(not(containsString("diskSpace"))))
+                .andExpect(content().string(not(containsString("validationQuery"))));
     }
 
     @Test

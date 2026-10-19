@@ -149,7 +149,7 @@ class UserControllerTest {
 
     @Test
     void getAllReturnsPagedContentAndCapsPageSize() throws Exception {
-        when(userService.getAll(any(Pageable.class)))
+        when(userService.getAll(any(), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(sample(UUID.randomUUID())), PageRequest.of(0, 100), 1));
 
         mockMvc.perform(get("/api/v1/users")
@@ -158,12 +158,74 @@ class UserControllerTest {
                         .param("sort", "email,asc"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content[0].email").value("bob@example.com"))
+                .andExpect(jsonPath("$.content[0].keycloakId").doesNotExist())
                 .andExpect(jsonPath("$.totalElements").value(1));
 
         ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
-        verify(userService).getAll(captor.capture());
+        verify(userService).getAll(any(), any(), captor.capture());
         assertThat(captor.getValue().getPageSize()).isEqualTo(100);
         assertThat(captor.getValue().getSort()).isEqualTo(Sort.by(Sort.Direction.ASC, "email"));
+    }
+
+    @Test
+    void getAllWithoutFiltersPassesNullsToService() throws Exception {
+        when(userService.getAll(any(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
+
+        mockMvc.perform(get("/api/v1/users"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<String> search = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<UserStatus> status = ArgumentCaptor.forClass(UserStatus.class);
+        verify(userService).getAll(search.capture(), status.capture(), any(Pageable.class));
+        assertThat(search.getValue()).isNull();
+        assertThat(status.getValue()).isNull();
+    }
+
+    @Test
+    void getAllPassesSearchStatusAndPageableToService() throws Exception {
+        when(userService.getAll(any(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(1, 5), 0));
+
+        mockMvc.perform(get("/api/v1/users")
+                        .param("search", "ali")
+                        .param("status", "ACTIVE")
+                        .param("page", "1")
+                        .param("size", "5")
+                        .param("sort", "email,asc"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<String> search = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<UserStatus> status = ArgumentCaptor.forClass(UserStatus.class);
+        ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
+        verify(userService).getAll(search.capture(), status.capture(), pageable.capture());
+        assertThat(search.getValue()).isEqualTo("ali");
+        assertThat(status.getValue()).isEqualTo(UserStatus.ACTIVE);
+        assertThat(pageable.getValue().getPageNumber()).isEqualTo(1);
+        assertThat(pageable.getValue().getPageSize()).isEqualTo(5);
+    }
+
+    @Test
+    void getAllReturns400WhenStatusIsInvalid() throws Exception {
+        mockMvc.perform(get("/api/v1/users").param("status", "BOGUS"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.detail", Matchers.containsString("status")));
+    }
+
+    @Test
+    void getAllReturns400WhenSortPropertyIsUnknown() throws Exception {
+        mockMvc.perform(get("/api/v1/users").param("sort", "keycloakId,asc"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.detail").value("Invalid sort property: keycloakId"));
+    }
+
+    @Test
+    void getAllReturns400WhenSortDirectionIsInvalid() throws Exception {
+        mockMvc.perform(get("/api/v1/users").param("sort", "email,BOGUS"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400));
     }
 
     @Test
@@ -187,6 +249,36 @@ class UserControllerTest {
                 .andExpect(status().isNoContent());
 
         verify(userService).deactivate(id);
+    }
+
+    @Test
+    void activateReturns200WithActivatedUser() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(userService.activate(id)).thenReturn(sample(id));
+
+        mockMvc.perform(post("/api/v1/users/{id}/activate", id))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(id.toString()))
+                .andExpect(jsonPath("$.email").value("bob@example.com"))
+                .andExpect(jsonPath("$.status").value("ACTIVE"));
+    }
+
+    @Test
+    void activateReturns404WhenUnknown() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(userService.activate(id)).thenThrow(new UserNotFoundException(id));
+
+        mockMvc.perform(post("/api/v1/users/{id}/activate", id))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.detail").value("User not found"));
+    }
+
+    @Test
+    void activateReturns400WhenUuidMalformed() throws Exception {
+        mockMvc.perform(post("/api/v1/users/{id}/activate", "not-a-uuid"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400));
     }
 
     @Test

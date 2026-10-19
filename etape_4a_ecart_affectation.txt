@@ -1,0 +1,183 @@
+ÉTAPE 4A — ASSIGNMENT GAP ANALYSIS (lecture seule)
+Date : 2026-10-19
+Portée : analyse d'écart backend uniquement. Aucun code, migration, config, schéma ou
+Keycloak modifié. Seul ce fichier a été créé. Aucun commit.
+
+Base de preuves inspectée : pom.xml, application.yml, docker-compose.yml, README.md,
+V1__create_user.sql, OpenApiConfig.java, GlobalExceptionHandler.java, SecurityConfig.java,
+SecurityErrorResponseWriter.java, LocalUserActiveGuardFilter.java, KeycloakRolesConverter.java,
+KeycloakIdentityResolver.java, UserIdentityService.java, UserController.java, UserService.java,
+UserRepository.java, UserMapper.java, User entity, UserStatus, dto/*, UserTestData.java,
+docs/architecture/backend-architecture.md, docs/architecture/rbac-audit.md, arbre src complet,
+git status --short (18 entrées inchangées depuis 3B.6).
+
+================================================================================
+1. MATRICE EXIGENCE PAR EXIGENCE
+Statuts : [OK] implémenté+testé · [OK-faible] implémenté, vérification faible ·
+[PARTIEL] partiel · [MANQUANT] absent
+
+1.1 Gestion des utilisateurs (module user — le seul module métier existant)
+--------------------------------------------------------------------------------
+[OK]       CRUD de base 5 endpoints — UserController.java:68,86,113,134,157
+           (POST, GET, GET/{id}, PUT, DELETE logique). Tests : UserControllerTest (11).
+[OK]       Désactivation logique (status=INACTIVE, ligne conservée) — UserService.java:69.
+[OK]       Unicité + normalisation email (trim, minuscules) — UserService.java:85-104.
+[OK]       Pagination/tri bornés (size max 100) — application.yml (max-page-size).
+[OK]       keycloak_id nullable + unique en base — V1__create_user.sql; jamais exposé
+           (UserMapper.java:23, UserResponse sans keycloakId).
+[MANQUANT] Réactivation d'un utilisateur (aucun endpoint activate ; seul deactivate existe).
+[MANQUANT] Recherche/filtrage multicritère (UserRepository : pas de requête de recherche ;
+           uniquement page/size/sort sur findAll).
+[MANQUANT] Mise à jour partielle PATCH (seul PUT complet).
+[MANQUANT] Endpoint admin de liaison keycloakId ↔ app_user (la colonne et le filtre de garde
+           existent, LocalUserActiveGuardFilter + UserIdentityService ; aucune API pour lier).
+[OK-faible] Tri invalide → 500 non géré en 400 (connu, documenté ; UserController.java:110
+           le décrit explicitement comme 500).
+
+1.2 Sécurité / RBAC (socle transverse)
+--------------------------------------------------------------------------------
+[OK]       Rôles realm ADMIN/MANAGER/USER créés et matrice vécue en réel (3B.5A/3B.5B) :
+           ADMIN 200/400/404, MANAGER lecture seule, USER 403, unlinked 403, INACTIVE 403,
+           sans token 401, health anon 200.
+[OK]       403 JSON strict identique garde+RBAC — SecurityErrorResponseWriter.java,
+           SecurityConfig.java (accessDeniedHandler), 122 tests verts exit 0.
+[OK]       Garde "lié+actif" — LocalUserActiveGuardFilter.java ; contract dans
+           UserIdentityService.isCurrentUserActiveLinked().
+[MANQUANT] Validation de la claim aud (aucune occurrence de aud dans src/ ;
+           décision 3B.7 en attente).
+[MANQUANT] Clock skew JWT explicite (implicite Spring 60 s ; décision 3B.7 en attente).
+[MANQUANT] Runbook d'bootstrap du premier ADMIN (Option A ; décision 3B.7 en attente).
+
+1.3 Agences & fonctions
+--------------------------------------------------------------------------------
+[MANQUANT] Intégralité : aucune entité/table/colonne/migration/API agency ou function.
+           Seule la table app_user existe (V1__create_user.sql). Aucune affectation
+           user↔agency, user↔function. Le module role de backend-architecture.md §4.3
+           (tables role/permission/user_role/role_permission) n'existe pas non plus —
+           les rôles ne vivent que côté Keycloak.
+
+1.4 Dashboard
+--------------------------------------------------------------------------------
+[MANQUANT] Aucun contrôleur/service/métrique. Les définitions produit des KPI restent
+           absentes (backend-architecture.md §10.8 — bloquant avant tout code).
+
+1.5 Rapports / exports
+--------------------------------------------------------------------------------
+[MANQUANT] Aucun module, aucun endpoint. pom.xml confirmé sans OpenPDF/iText/Apache POI
+           (dépendances : web, actuator, validation, data-jpa, security,
+           oauth2-resource-server, postgresql, flyway, springdoc, testcontainers).
+
+1.6 Journal d'audit
+--------------------------------------------------------------------------------
+[MANQUANT] Aucune table audit_log, aucune capture (AOP/intercepteur), aucune API de
+           consultation. Seule la doc propose le modèle (backend-architecture.md §6.2/§4.8).
+
+1.7 Profil self-service
+--------------------------------------------------------------------------------
+[MANQUANT] Aucun endpoint /api/v1/me (GET/PUT), aucune préférences (user_preference).
+           Infrastructure d'identité disponible (KeycloakIdentityResolver + UserIdentityService)
+           mais inexploitée côté API.
+
+1.8 Notifications & email
+--------------------------------------------------------------------------------
+[MANQUANT] Notifications : rien (entité, API, canal in-app).
+[MANQUANT] Email : rien (pas de spring-boot-starter-mail, pas de template engine,
+           pas de config SMTP dans application.yml, pas d'email_template).
+
+1.9 Migrations / données
+--------------------------------------------------------------------------------
+[OK-faible] Stratégie Flyway en place (source de vérité, ddl-auto validate, V1 inchangé)
+           mais une seule migration : toute l'extension du schéma reste à faire.
+[OK]        Pas de seed dangereux (uniquement V1 ; aucune V2 dans src/main/resources/db).
+
+1.10 OpenAPI / tests / docs
+--------------------------------------------------------------------------------
+[OK]        OpenAPI : bearer JWT, ProblemDetail RFC 7807 documenté, nettoyage des schémas
+            pagination — OpenApiConfig.java.
+[OK]        Tests : 122 tests verts, exit 0, Java 21 (dernier run 3B.6). Niveaux : MVC,
+            service, repository (Testcontainers PG16), sécurité (mock JWT + intégration).
+[OK-faible] README.md = une seule ligne "# S-Digital". Architecture/rbac : docs solides
+            mais en français et datant d'avant 3B.5 (rbac-audit.md dit encore "81 tests",
+            "rôles métier absents" — à rafraîchir).
+
+================================================================================
+2. ORDRE D'IMPLÉMENTATION PROPOSÉ
+0.  Gel des décisions (section 4) — sans elles, chaque module risque la refonte.
+1.  user : réactivation + (optionnel) PATCH + tri invalide→400. Petit, sans dépendance.
+2.  user : endpoint de liaison keycloakId (ADMIN) — conditionne le provisioning réel.
+3.  module agency/function (entités, migration V2/V3, CRUD, affectations) — cœur du besoin.
+4.  common/audit + module audit (capture des écritures + consultation ADMIN).
+5.  module profile (/me + préférences).
+6.  module email (SMTP + templates) puis module notification (in-app, puis canal email).
+7.  module dashboard (après validation produit des KPI).
+8.  module reporting (POI/OpenPDF, exports users+audit ; dépend de 3 et 4).
+9.  durcissements sécurité 3B.7 (aud, clock skew, bootstrap) à tout moment après accord.
+
+================================================================================
+3. ESTIMATIONS PRÉLIMINAIRES (homme·jour, hors tests de non-régression complets)
+- Réactivation + PATCH + 400 sort          : 1–2 j
+- Endpoint liaison keycloakId (ADMIN)       : 1–2 j  (+ runbook opérationnel)
+- Module agency/function complet            : 3–5 j  (migration, CRUD, affectations, tests)
+- Audit (capture + consultation, RGPD)      : 3–5 j
+- Profile /me + préférences                 : 1–2 j
+- Email (SMTP + templates + outbox)         : 2–4 j
+- Notifications in-app (+ canal email)      : 2–4 j  (email en dépend)
+- Dashboard (après KPI définis)             : 2–4 j
+- Reporting PDF/Excel/CSV                   : 2–4 j
+- CI/DevSecOps (Ali)                        : 2–3 j
+Total indicatif : 19–34 j pour le périmètre complet de l'assignment.
+
+================================================================================
+4. DÉCISIONS À PRENDRE (El Mehdi)
+D1. Source de vérité des rôles : Keycloak seul (statu quo, recommandé pour ce stade —
+    pas de module role local) vs tables locales role/user_role (backend-architecture.md §4.3).
+    Conséquence : si Keycloak seul, le module "role" de l'architecture cible tombe.
+D2. Agences & fonctions : modèle exact attendu (tables agency/function dédiées ?)
+    et règles d'affectation (un user → N agences ? une fonction principale ?).
+D3. Provisioning : création locale puis liaison manuelle (Option A déjà validée pour
+    l'admin initial) vs création d'abord dans Keycloak ; auto-provisioning refusé (OK).
+D4. Audit : périmètre des actions tracées, rétention, RGPD (données personnelles dans
+    details JSONB), immutabilité.
+D5. Dashboard : définition produit des KPI (bloquant).
+D6. Reporting : bibliothèque (Apache POI + OpenPDF recommandés), formats, synchrone.
+D7. Email : fournisseur SMTP + gestion des secrets hors dev local.
+D8. Approbation des 3 décisions 3B.7 restantes (audience, clock skew, bootstrap ADMIN).
+D9. Suppression physique éventuelle et règles de purge (aujourd'hui uniquement logique).
+D10. Pagination : garder le contrat Page Spring actuel ou passer à un DTO maison.
+
+================================================================================
+5. ITEMS DEVSECOPS (Ali)
+A1. Pipeline CI (build + 122 tests via Testcontainers, Java 21, Maven).
+A2. Gestion des secrets hors dev (KEYCLOAK_ISSUER_URI, KEYCLOAK_JWK_SET_URI, SMTP,
+    KC_BOOTSTRAP_ADMIN_*) — jamais dans le dépôt ; docker-compose = dev only.
+A3. Durcissement compose : healthchecks OK ; à documenter : mot de passe postgres
+    "sdigital" et admin Keycloak "admin/admin" = défauts dev uniquement.
+A4. Images/versioning : pining Keycloak 26.5.2 et postgres:16 ; stratégie de upgrade.
+A5. Qualité de build : Surefire, (optionnel) JaCoCo, (optionnel) ArchUnit pour les
+    frontières de modules quand les nouveaux modules apparaîtront.
+A6. Environnements (dev/staging/prod) : issuer/JWKS par env, CORS à revoir hors localhost.
+A7. Rafraîchir rbac-audit.md et backend-architecture.md (statuts périmés : 81 tests,
+    "rôles absents", "Keycloak non intégré").
+
+================================================================================
+6. QUESTIONS À ZAHRA
+Q1. Règles métier des agences : qui administre les agences/fonctions (ADMIN seul ?) ?
+Q2. Un utilisateur peut-il appartenir à plusieurs agences ? Plusieurs fonctions ?
+Q3. Le dashboard doit-il agréger aussi les agences/fonctions ou seulement utilisateurs ?
+Q4. Rapports attendus : quels exports précis, quels filtres, PDF et/ou Excel ?
+Q5. Notifications : canaux attendus (in-app suffit-il pour une première itération ?) ;
+    déclencheurs métier (création utilisateur, changement d'affectation…) ?
+Q6. Emails : existants-ils des modèles de contenu déjà rédigés ? Langue(s) ?
+Q7. Audit : qui consulte les logs (ADMIN uniquement ?) ; besoin d'export ?
+Q8. Existe-t-il un glossaire officiel des statuts utilisateurs et des fonctions ?
+
+================================================================================
+7. PROCHAINE TÂCHE LA PLUS PETITE (recommandation)
+Endpoint de réactivation : POST /api/v1/users/{id}/activate (ADMIN), inverse de
+deactivate, tests unitaires+MVC+sécurité alignés sur le pattern existant. ~1–2 j,
+aucune migration, aucune décision extérieure bloquante.
+
+================================================================================
+8. CONFIRMATION
+Aucune modification de code, configuration, migration, schéma ou Keycloak.
+git status inchangé (18 entrées). Fichiers créés : ce rapport uniquement.

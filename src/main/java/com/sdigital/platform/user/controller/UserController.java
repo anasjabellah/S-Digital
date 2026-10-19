@@ -3,6 +3,8 @@ package com.sdigital.platform.user.controller;
 import com.sdigital.platform.user.dto.CreateUserRequest;
 import com.sdigital.platform.user.dto.UpdateUserRequest;
 import com.sdigital.platform.user.dto.UserResponse;
+import com.sdigital.platform.user.entity.User;
+import com.sdigital.platform.user.entity.UserStatus;
 import com.sdigital.platform.user.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -18,6 +20,8 @@ import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.mapping.PropertyReferenceException;
+import org.springframework.data.util.TypeInformation;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
@@ -28,10 +32,13 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
+import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -47,10 +54,25 @@ public class UserController {
 
     private static final String ID_EXAMPLE = "3fa85f64-5717-4562-b3fc-2c963f66afa6";
 
+    /**
+     * Sortable user properties. Anything else (in particular {@code keycloakId}, which is
+     * never exposed) is rejected with 400 instead of reaching the persistence layer.
+     */
+    private static final Set<String> SORTABLE_PROPERTIES = Set.of(
+            "id", "email", "firstName", "lastName", "status", "createdAt", "updatedAt");
+
     private final UserService userService;
 
     public UserController(UserService userService) {
         this.userService = userService;
+    }
+
+    private static void validateSort(Pageable pageable) {
+        for (Sort.Order order : pageable.getSort()) {
+            if (!SORTABLE_PROPERTIES.contains(order.getProperty())) {
+                throw new PropertyReferenceException(order.getProperty(), TypeInformation.of(User.class), List.of());
+            }
+        }
     }
 
     @Operation(summary = "Create a user",
@@ -92,29 +114,39 @@ public class UserController {
     /**
      * Returns a page of users. Pagination and sorting are bound by Spring Data
      * ({@code page}, {@code size}, {@code sort}); the maximum page size is capped
-     * globally through {@code spring.data.web.pageable.max-page-size}.
+     * globally through {@code spring.data.web.pageable.max-page-size}. Optional
+     * multicriteria filters ({@code search}, {@code status}) narrow the listing.
      */
     @Operation(summary = "List users",
             description = "Returns a paginated list of users. Pagination and sorting are bound by "
                     + "Spring Data: `page` (0-based, default 0) and `size` (default 20, capped at 100); "
                     + "non-numeric values fall back to their default. `sort` uses `property,asc|desc` and "
                     + "must reference an existing user property (e.g. `email`, `createdAt`); "
-                    + "default `createdAt,desc`.")
+                    + "default `createdAt,desc`. Optional filters can be combined: `search` is a "
+                    + "case-insensitive partial match on email, firstName and lastName; `status` is "
+                    + "an exact match on ACTIVE or INACTIVE.")
     @Parameters({
             @Parameter(name = "page", in = ParameterIn.QUERY, description = "Zero-based page index.", example = "0"),
             @Parameter(name = "size", in = ParameterIn.QUERY, description = "Page size (default 20, maximum 100).", example = "20"),
-            @Parameter(name = "sort", in = ParameterIn.QUERY, description = "Sort criteria as `property,asc|desc`; repeatable. Default `createdAt,desc`.", example = "email,asc")
+            @Parameter(name = "sort", in = ParameterIn.QUERY, description = "Sort criteria as `property,asc|desc`; repeatable. Default `createdAt,desc`.", example = "email,asc"),
+            @Parameter(name = "search", in = ParameterIn.QUERY, description = "Case-insensitive partial match on email, firstName and lastName.", example = "ali"),
+            @Parameter(name = "status", in = ParameterIn.QUERY, description = "Exact lifecycle status filter: ACTIVE or INACTIVE.", example = "ACTIVE")
     })
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Page of users"),
-            @ApiResponse(responseCode = "500", description = "Unexpected server error (for example an unknown sort property)",
+            @ApiResponse(responseCode = "400", description = "Invalid page, size, sort or filter parameter",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "500", description = "Unexpected server error",
                     content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
     })
     @GetMapping
     public Page<UserResponse> getAll(
             @ParameterObject
-            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
-        return userService.getAll(pageable);
+            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) UserStatus status) {
+        validateSort(pageable);
+        return userService.getAll(search, status, pageable);
     }
 
     @Operation(summary = "Update a user",
@@ -158,5 +190,23 @@ public class UserController {
             @Parameter(description = "UUID of the user", example = ID_EXAMPLE) @PathVariable UUID id) {
         userService.deactivate(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @Operation(summary = "Activate a user",
+            description = "Reactivates a deactivated user: the status becomes ACTIVE again. "
+                    + "No row is created and the Keycloak identity is not modified.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "User activated"),
+            @ApiResponse(responseCode = "400", description = "Malformed user id",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "404", description = "User not found",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "500", description = "Unexpected server error",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
+    })
+    @PostMapping("/{id}/activate")
+    public UserResponse activate(
+            @Parameter(description = "UUID of the user", example = ID_EXAMPLE) @PathVariable UUID id) {
+        return userService.activate(id);
     }
 }

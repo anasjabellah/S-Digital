@@ -4,6 +4,7 @@ import com.sdigital.platform.user.exception.EmailAlreadyUsedException;
 import com.sdigital.platform.user.exception.UserNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.mapping.PropertyReferenceException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
@@ -65,6 +66,28 @@ public class GlobalExceptionHandler {
     public ProblemDetail handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
         return problem(HttpStatus.BAD_REQUEST, TYPE_BAD_REQUEST,
                 "Bad request", "Invalid value for parameter '" + ex.getName() + "'");
+    }
+
+    /**
+     * Unknown sort property (thrown by Spring Data when the query is built, and by the
+     * explicit whitelist of the user listing).
+     */
+    @ExceptionHandler(PropertyReferenceException.class)
+    public ProblemDetail handlePropertyReference(PropertyReferenceException ex) {
+        return problem(HttpStatus.BAD_REQUEST, TYPE_VALIDATION,
+                "Validation failed", "Invalid sort property: " + ex.getPropertyName());
+    }
+
+    /**
+     * Invalid request parameter value raised during argument resolution, e.g. an unknown
+     * sort direction in {@code sort=email,BOGUS}. Mapped to 400 so that no invalid
+     * parameter ever surfaces as a 500.
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ProblemDetail handleIllegalArgument(IllegalArgumentException ex) {
+        log.debug("Request argument rejected: {}", ex.getMessage());
+        return problem(HttpStatus.BAD_REQUEST, TYPE_BAD_REQUEST,
+                "Bad request", "Invalid request parameter");
     }
 
     @ExceptionHandler(UserNotFoundException.class)

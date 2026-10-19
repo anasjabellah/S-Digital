@@ -9,6 +9,7 @@ import com.sdigital.platform.user.exception.EmailAlreadyUsedException;
 import com.sdigital.platform.user.exception.UserNotFoundException;
 import com.sdigital.platform.user.mapper.UserMapper;
 import com.sdigital.platform.user.repository.UserRepository;
+import com.sdigital.platform.user.repository.UserSpecifications;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -52,6 +53,23 @@ public class UserService {
         return userRepository.findAll(pageable).map(userMapper::toResponse);
     }
 
+    /**
+     * Returns a page of users narrowed by optional filters.
+     *
+     * <p>{@code search} is a case-insensitive partial match on email, first name and last
+     * name; a blank search is treated as absent. {@code status} is an exact match on the
+     * lifecycle status. When both filters are absent the historical unfiltered listing is
+     * used, so pagination and sorting behave exactly as before.</p>
+     */
+    @Transactional(readOnly = true)
+    public Page<UserResponse> getAll(String search, UserStatus status, Pageable pageable) {
+        if (isBlank(search) && status == null) {
+            return getAll(pageable);
+        }
+        return userRepository.findAll(UserSpecifications.withFilters(search, status), pageable)
+                .map(userMapper::toResponse);
+    }
+
     @Transactional
     public UserResponse update(UUID id, UpdateUserRequest request) {
         User user = findUserOrThrow(id);
@@ -69,6 +87,17 @@ public class UserService {
     public UserResponse deactivate(UUID id) {
         User user = findUserOrThrow(id);
         user.setStatus(UserStatus.INACTIVE);
+        return userMapper.toResponse(userRepository.save(user));
+    }
+
+    /**
+     * Reactivates a user by setting its status to {@link UserStatus#ACTIVE}.
+     * The row is never created nor deleted, and no other field is touched.
+     */
+    @Transactional
+    public UserResponse activate(UUID id) {
+        User user = findUserOrThrow(id);
+        user.setStatus(UserStatus.ACTIVE);
         return userMapper.toResponse(userRepository.save(user));
     }
 
@@ -101,5 +130,9 @@ public class UserService {
 
     private String normalizeEmail(String email) {
         return email.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 }

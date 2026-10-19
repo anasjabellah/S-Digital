@@ -8,6 +8,10 @@ import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabas
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.mapping.PropertyReferenceException;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -86,5 +90,101 @@ class UserRepositoryTest {
 
         assertThatThrownBy(() -> userRepository.saveAndFlush(second))
                 .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    // --- Multicriteria filtering (UserSpecifications) -----------------------------------------
+
+    @Test
+    void searchMatchesEmailIgnoringCase() {
+        userRepository.saveAndFlush(new User("alice@example.com", "Alice", "Doe"));
+
+        assertThat(filtered("ALICE@EXAMPLE", null).getContent())
+                .extracting(User::getEmail)
+                .containsExactly("alice@example.com");
+    }
+
+    @Test
+    void searchMatchesFirstNameAndLastNameIgnoringCase() {
+        userRepository.saveAndFlush(new User("alice@example.com", "Alice", "Doe"));
+        userRepository.saveAndFlush(new User("bob@example.com", "Bob", "Marley"));
+
+        assertThat(filtered("doe", null).getContent()).extracting(User::getEmail)
+                .containsExactly("alice@example.com");
+        assertThat(filtered("MARL", null).getContent()).extracting(User::getEmail)
+                .containsExactly("bob@example.com");
+    }
+
+    @Test
+    void searchFiltersByStatus() {
+        User inactive = new User("inactive@example.com", "Ina", "Ctive");
+        inactive.setStatus(UserStatus.INACTIVE);
+        userRepository.saveAndFlush(inactive);
+        userRepository.saveAndFlush(new User("active@example.com", "Ac", "Tive"));
+
+        assertThat(filtered(null, UserStatus.INACTIVE).getContent()).extracting(User::getEmail)
+                .containsExactly("inactive@example.com");
+        assertThat(filtered(null, UserStatus.ACTIVE).getContent()).extracting(User::getEmail)
+                .containsExactly("active@example.com");
+    }
+
+    @Test
+    void searchCombinesTermAndStatus() {
+        User activeTarget = new User("target-active@example.com", "Target", "One");
+        User inactiveTarget = new User("target-inactive@example.com", "Target", "Two");
+        inactiveTarget.setStatus(UserStatus.INACTIVE);
+        userRepository.saveAndFlush(activeTarget);
+        userRepository.saveAndFlush(inactiveTarget);
+        userRepository.saveAndFlush(new User("unrelated@example.com", "Other", "Name"));
+
+        assertThat(filtered("target", UserStatus.INACTIVE).getContent()).extracting(User::getEmail)
+                .containsExactly("target-inactive@example.com");
+    }
+
+    @Test
+    void searchEscapesSqlWildcards() {
+        userRepository.saveAndFlush(new User("literal%100@example.com", "Literal", "Percent"));
+        userRepository.saveAndFlush(new User("other@example.com", "Other", "Name"));
+
+        assertThat(filtered("literal%100", null).getContent()).extracting(User::getEmail)
+                .containsExactly("literal%100@example.com");
+        assertThat(filtered("%100", null).getContent()).extracting(User::getEmail)
+                .containsExactly("literal%100@example.com");
+    }
+
+    @Test
+    void searchRespectsPaginationAndSort() {
+        userRepository.saveAndFlush(new User("a@example.com", "Aa", "Target"));
+        userRepository.saveAndFlush(new User("b@example.com", "Bb", "Target"));
+        userRepository.saveAndFlush(new User("c@example.com", "Cc", "Target"));
+
+        Page<User> page = userRepository.findAll(
+                UserSpecifications.withFilters("target", null),
+                PageRequest.of(0, 2, Sort.by(Sort.Direction.ASC, "email")));
+
+        assertThat(page.getTotalElements()).isEqualTo(3);
+        assertThat(page.getTotalPages()).isEqualTo(2);
+        assertThat(page.getContent()).extracting(User::getEmail).containsExactly("a@example.com", "b@example.com");
+    }
+
+    @Test
+    void searchWithNoFiltersMatchesEveryUser() {
+        userRepository.saveAndFlush(new User("one@example.com", "One", "User"));
+        userRepository.saveAndFlush(new User("two@example.com", "Two", "User"));
+
+        assertThat(filtered(null, null).getTotalElements()).isEqualTo(2);
+        assertThat(filtered("   ", null).getTotalElements()).isEqualTo(2);
+    }
+
+    @Test
+    void unknownSortPropertyIsRejectedBySpringData() {
+        userRepository.saveAndFlush(new User("alice@example.com", "Alice", "Doe"));
+
+        assertThatThrownBy(() -> userRepository.findAll(
+                PageRequest.of(0, 10, Sort.by(Sort.Direction.ASC, "notAProperty"))))
+                .isInstanceOf(PropertyReferenceException.class);
+    }
+
+    private Page<User> filtered(String search, UserStatus status) {
+        return userRepository.findAll(UserSpecifications.withFilters(search, status), PageRequest.of(0, 20));
     }
 }

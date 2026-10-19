@@ -5,6 +5,8 @@ import com.nimbusds.jose.jwk.JWKSet;
 import com.nimbusds.jose.jwk.RSAKey;
 import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
 import com.sdigital.platform.common.exception.GlobalExceptionHandler;
+import com.sdigital.platform.user.service.UserIdentityService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -22,6 +24,7 @@ import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -34,6 +37,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -47,6 +52,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * controller echoes the resulting authorities, so the full path
  * {@code bearer token -> JwtDecoder -> JwtAuthenticationConverter -> SecurityContext} is asserted
  * end to end. No production endpoint is added or modified.</p>
+ *
+ * <p>These tests intentionally stub {@link UserIdentityService#isCurrentUserActiveLinked()} to
+ * {@code true}: they isolate the role-mapping behaviour from
+ * {@link LocalUserActiveGuardFilter}, which is covered separately by
+ * {@link LocalUserActiveGuardFilterTest}. Identity failures must never turn into role failures
+ * here, so the stubbing is lenient for the requests rejected earlier by the resource server
+ * (401 cases).</p>
  */
 @WebMvcTest(controllers = KeycloakRolesSecurityIntegrationTest.AuthoritiesController.class)
 @Import({SecurityConfig.class, KeycloakJwtAuthenticationConverterConfig.class,
@@ -60,6 +72,14 @@ class KeycloakRolesSecurityIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @MockitoBean
+    private UserIdentityService userIdentityService;
+
+    @BeforeEach
+    void linkedActiveIdentity() {
+        lenient().when(userIdentityService.isCurrentUserActiveLinked()).thenReturn(true);
+    }
 
     @Test
     void validTokenWithRealmRoleYieldsRoleAuthority() throws Exception {
@@ -153,6 +173,20 @@ class KeycloakRolesSecurityIntegrationTest {
     void protectedEndpointReturns401WithoutToken() throws Exception {
         mockMvc.perform(get("/api/v1/test/authorities"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    /**
+     * The identity guard must run after bearer authentication: a valid token whose identity is
+     * not linked to an ACTIVE local user is refused even though the JWT itself is valid.
+     */
+    @Test
+    void protectedEndpointReturns403WhenIdentityIsNotLinkedAndActive() throws Exception {
+        when(userIdentityService.isCurrentUserActiveLinked()).thenReturn(false);
+        String token = TestJwtConfiguration.signedToken(Map.of(
+                "realm_access", Map.of("roles", List.of("ADMIN"))));
+
+        mockMvc.perform(get("/api/v1/test/authorities").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+                .andExpect(status().isForbidden());
     }
 
     /**
