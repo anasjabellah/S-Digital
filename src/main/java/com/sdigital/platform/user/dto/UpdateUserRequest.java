@@ -5,6 +5,8 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
+import java.util.UUID;
+
 /**
  * Request payload to update a user.
  *
@@ -30,6 +32,12 @@ public record UpdateUserRequest(
         @Schema(description = "Last name of the user.", example = "Lovelace")
         @NotBlank(message = "lastName is required")
         @Size(max = 100, message = "lastName must not exceed 100 characters")
-        String lastName
+        String lastName,
+
+        @Schema(description = "Identifier of the agency assigned to the user (must reference an ACTIVE agency).", example = "3fa85f64-5717-4562-b3fc-2c963f66afa6")
+        UUID agencyId,
+
+        @Schema(description = "Identifier of the function assigned to the user (must reference an ACTIVE function).", example = "5fa85f64-5717-4562-b3fc-2c963f66afa7")
+        UUID functionId
 ) {
 }

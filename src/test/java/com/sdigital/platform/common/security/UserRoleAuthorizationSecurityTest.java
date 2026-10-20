@@ -123,7 +123,7 @@ class UserRoleAuthorizationSecurityTest {
     void adminCanCreateUser() throws Exception {
         when(userService.create(any(CreateUserRequest.class))).thenReturn(sampleResponse());
         String body = objectMapper.writeValueAsString(
-                new CreateUserRequest("bob@example.com", "Bob", "Marley"));
+                new CreateUserRequest("bob@example.com", "Bob", "Marley", null, null));
 
         mockMvc.perform(post("/api/v1/users")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -137,7 +137,7 @@ class UserRoleAuthorizationSecurityTest {
     void adminCanUpdateUser() throws Exception {
         when(userService.update(eq(USER_ID), any(UpdateUserRequest.class))).thenReturn(sampleResponse());
         String body = objectMapper.writeValueAsString(
-                new UpdateUserRequest("ada.lovelace@example.com", "Ada", "Lovelace"));
+                new UpdateUserRequest("ada.lovelace@example.com", "Ada", "Lovelace", null, null));
 
         mockMvc.perform(put("/api/v1/users/" + USER_ID)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -183,7 +183,7 @@ class UserRoleAuthorizationSecurityTest {
     @Test
     void managerCannotCreateUpdateDeactivateOrActivateUsers() throws Exception {
         String body = objectMapper.writeValueAsString(
-                new CreateUserRequest("bob@example.com", "Bob", "Marley"));
+                new CreateUserRequest("bob@example.com", "Bob", "Marley", null, null));
 
         expectForbiddenJson(mockMvc.perform(post("/api/v1/users")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -216,7 +216,7 @@ class UserRoleAuthorizationSecurityTest {
     @Test
     void userRoleIsDeniedWrites() throws Exception {
         String body = objectMapper.writeValueAsString(
-                new CreateUserRequest("bob@example.com", "Bob", "Marley"));
+                new CreateUserRequest("bob@example.com", "Bob", "Marley", null, null));
 
         expectForbiddenJson(mockMvc.perform(post("/api/v1/users")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -293,7 +293,7 @@ class UserRoleAuthorizationSecurityTest {
     @Test
     void roleDenialAndGuardDenialCarryTheSameGenericJson() throws Exception {
         String createBody = objectMapper.writeValueAsString(
-                new CreateUserRequest("bob@example.com", "Bob", "Marley"));
+                new CreateUserRequest("bob@example.com", "Bob", "Marley", null, null));
         MvcResult roleDenial = expectForbiddenJson(mockMvc.perform(post("/api/v1/users")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(createBody)
@@ -355,7 +355,7 @@ class UserRoleAuthorizationSecurityTest {
     private UserResponse sampleResponse() {
         Instant created = Instant.parse("2026-01-01T10:00:00Z");
         return new UserResponse(USER_ID, "ada.lovelace@example.com", "Ada", "Lovelace",
-                UserStatus.ACTIVE, created, created);
+                UserStatus.ACTIVE, null, null, created, created);
     }
 }
 

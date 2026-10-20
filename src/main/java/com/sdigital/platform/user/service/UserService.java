@@ -1,11 +1,19 @@
 package com.sdigital.platform.user.service;
 
+import com.sdigital.platform.agency.entity.Agency;
+import com.sdigital.platform.agency.entity.AgencyStatus;
+import com.sdigital.platform.agency.repository.AgencyRepository;
+import com.sdigital.platform.function.entity.Function;
+import com.sdigital.platform.function.entity.FunctionStatus;
+import com.sdigital.platform.function.repository.FunctionRepository;
 import com.sdigital.platform.user.dto.CreateUserRequest;
 import com.sdigital.platform.user.dto.UpdateUserRequest;
 import com.sdigital.platform.user.dto.UserResponse;
 import com.sdigital.platform.user.entity.User;
 import com.sdigital.platform.user.entity.UserStatus;
 import com.sdigital.platform.user.exception.EmailAlreadyUsedException;
+import com.sdigital.platform.user.exception.UserAgencyNotFoundException;
+import com.sdigital.platform.user.exception.UserFunctionNotFoundException;
 import com.sdigital.platform.user.exception.UserNotFoundException;
 import com.sdigital.platform.user.mapper.UserMapper;
 import com.sdigital.platform.user.repository.UserRepository;
@@ -29,10 +37,17 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final UserMapper userMapper;
+    private final AgencyRepository agencyRepository;
+    private final FunctionRepository functionRepository;
 
-    public UserService(UserRepository userRepository, UserMapper userMapper) {
+    public UserService(UserRepository userRepository,
+                       UserMapper userMapper,
+                       AgencyRepository agencyRepository,
+                       FunctionRepository functionRepository) {
         this.userRepository = userRepository;
         this.userMapper = userMapper;
+        this.agencyRepository = agencyRepository;
+        this.functionRepository = functionRepository;
     }
 
     @Transactional
@@ -40,6 +55,8 @@ public class UserService {
         CreateUserRequest normalized = normalize(request);
         ensureEmailAvailable(normalized.email(), null);
         User user = userMapper.toEntity(normalized);
+        user.setAgency(resolveActiveAgency(normalized.agencyId()));
+        user.setFunction(resolveActiveFunction(normalized.functionId()));
         return userMapper.toResponse(userRepository.save(user));
     }
 
@@ -76,6 +93,8 @@ public class UserService {
         UpdateUserRequest normalized = normalize(request);
         ensureEmailAvailable(normalized.email(), id);
         userMapper.applyUpdate(user, normalized);
+        user.setAgency(resolveActiveAgency(normalized.agencyId()));
+        user.setFunction(resolveActiveFunction(normalized.functionId()));
         return userMapper.toResponse(userRepository.save(user));
     }
 
@@ -121,15 +140,39 @@ public class UserService {
     }
 
     private CreateUserRequest normalize(CreateUserRequest request) {
-        return new CreateUserRequest(normalizeEmail(request.email()), request.firstName(), request.lastName());
+        return new CreateUserRequest(normalizeEmail(request.email()), request.firstName(), request.lastName(), request.agencyId(), request.functionId());
     }
 
     private UpdateUserRequest normalize(UpdateUserRequest request) {
-        return new UpdateUserRequest(normalizeEmail(request.email()), request.firstName(), request.lastName());
+        return new UpdateUserRequest(normalizeEmail(request.email()), request.firstName(), request.lastName(), request.agencyId(), request.functionId());
     }
 
     private String normalizeEmail(String email) {
         return email.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private Agency resolveActiveAgency(UUID agencyId) {
+        if (agencyId == null) {
+            return null;
+        }
+        Agency agency = agencyRepository.findById(agencyId)
+                .orElseThrow(() -> new UserAgencyNotFoundException(agencyId));
+        if (agency.getStatus() != AgencyStatus.ACTIVE) {
+            throw new UserAgencyNotFoundException(agencyId);
+        }
+        return agency;
+    }
+
+    private Function resolveActiveFunction(UUID functionId) {
+        if (functionId == null) {
+            return null;
+        }
+        Function function = functionRepository.findById(functionId)
+                .orElseThrow(() -> new UserFunctionNotFoundException(functionId));
+        if (function.getStatus() != FunctionStatus.ACTIVE) {
+            throw new UserFunctionNotFoundException(functionId);
+        }
+        return function;
     }
 
     private static boolean isBlank(String value) {

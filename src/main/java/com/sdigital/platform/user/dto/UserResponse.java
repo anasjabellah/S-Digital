@@ -31,6 +31,12 @@ public record UserResponse(
                 example = "ACTIVE")
         UserStatus status,
 
+        @Schema(description = "Assigned agency (null if none).")
+        UserAgencyDto agency,
+
+        @Schema(description = "Assigned function (null if none).")
+        UserFunctionDto function,
+
         @Schema(description = "Creation timestamp (UTC).", example = "2026-01-01T12:00:00Z")
         Instant createdAt,
 

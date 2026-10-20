@@ -64,14 +64,14 @@ class UserControllerTest {
 
     private UserResponse sample(UUID id) {
         Instant created = Instant.parse("2026-01-01T10:00:00Z");
-        return new UserResponse(id, "bob@example.com", "Bob", "Marley", UserStatus.ACTIVE, created, created);
+        return new UserResponse(id, "bob@example.com", "Bob", "Marley", UserStatus.ACTIVE, null, null, created, created);
     }
 
     @Test
     void createReturns201WithBodyAndLocation() throws Exception {
         UUID id = UUID.randomUUID();
         when(userService.create(any(CreateUserRequest.class))).thenReturn(sample(id));
-        String body = objectMapper.writeValueAsString(new CreateUserRequest("bob@example.com", "Bob", "Marley"));
+        String body = objectMapper.writeValueAsString(new CreateUserRequest("bob@example.com", "Bob", "Marley", null, null));
 
         mockMvc.perform(post("/api/v1/users")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -84,7 +84,7 @@ class UserControllerTest {
 
     @Test
     void createReturns400WhenBodyInvalid() throws Exception {
-        String body = objectMapper.writeValueAsString(new CreateUserRequest("not-an-email", "", ""));
+        String body = objectMapper.writeValueAsString(new CreateUserRequest("not-an-email", "", "", null, null));
 
         mockMvc.perform(post("/api/v1/users")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -108,7 +108,7 @@ class UserControllerTest {
     void createReturns409WhenEmailAlreadyUsed() throws Exception {
         when(userService.create(any(CreateUserRequest.class)))
                 .thenThrow(new EmailAlreadyUsedException("bob@example.com"));
-        String body = objectMapper.writeValueAsString(new CreateUserRequest("bob@example.com", "Bob", "Marley"));
+        String body = objectMapper.writeValueAsString(new CreateUserRequest("bob@example.com", "Bob", "Marley", null, null));
 
         mockMvc.perform(post("/api/v1/users")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -232,7 +232,7 @@ class UserControllerTest {
     void updateReturns200() throws Exception {
         UUID id = UUID.randomUUID();
         when(userService.update(any(UUID.class), any(UpdateUserRequest.class))).thenReturn(sample(id));
-        String body = objectMapper.writeValueAsString(new UpdateUserRequest("bob@example.com", "Bobby", "Marley"));
+        String body = objectMapper.writeValueAsString(new UpdateUserRequest("bob@example.com", "Bobby", "Marley", null, null));
 
         mockMvc.perform(put("/api/v1/users/{id}", id)
                         .contentType(MediaType.APPLICATION_JSON)

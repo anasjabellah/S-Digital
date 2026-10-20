@@ -1,6 +1,8 @@
 package com.sdigital.platform.user.service;
 
 import com.sdigital.platform.user.UserTestData;
+import com.sdigital.platform.agency.repository.AgencyRepository;
+import com.sdigital.platform.function.repository.FunctionRepository;
 import com.sdigital.platform.user.dto.CreateUserRequest;
 import com.sdigital.platform.user.dto.UpdateUserRequest;
 import com.sdigital.platform.user.dto.UserResponse;
@@ -44,16 +46,22 @@ class UserServiceTest {
     @Mock
     private UserRepository userRepository;
 
+    @Mock
+    private AgencyRepository agencyRepository;
+
+    @Mock
+    private FunctionRepository functionRepository;
+
     private UserService userService;
 
     @BeforeEach
     void setUp() {
-        userService = new UserService(userRepository, new UserMapper());
+        userService = new UserService(userRepository, new UserMapper(), agencyRepository, functionRepository);
     }
 
     @Test
     void createNormalizesEmailAndPersists() {
-        CreateUserRequest request = new CreateUserRequest("  Alice@Example.COM ", "Alice", "Doe");
+        CreateUserRequest request = new CreateUserRequest("  Alice@Example.COM ", "Alice", "Doe", null, null);
         when(userRepository.existsByEmail("alice@example.com")).thenReturn(false);
         when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -68,7 +76,7 @@ class UserServiceTest {
 
     @Test
     void createRejectsAlreadyUsedEmail() {
-        CreateUserRequest request = new CreateUserRequest("alice@example.com", "Alice", "Doe");
+        CreateUserRequest request = new CreateUserRequest("alice@example.com", "Alice", "Doe", null, null);
         when(userRepository.existsByEmail("alice@example.com")).thenReturn(true);
 
         assertThatThrownBy(() -> userService.create(request))
@@ -107,7 +115,7 @@ class UserServiceTest {
     void updateAllowsUnchangedEmailOfSameUser() {
         UUID id = UUID.randomUUID();
         User user = UserTestData.user(id, "alice@example.com", "Alice", "Doe", null, Instant.now(), Instant.now());
-        UpdateUserRequest request = new UpdateUserRequest("  ALICE@example.com ", "Alicia", "Doe");
+        UpdateUserRequest request = new UpdateUserRequest("  ALICE@example.com ", "Alicia", "Doe", null, null);
         when(userRepository.findById(id)).thenReturn(Optional.of(user));
         when(userRepository.existsByEmailAndIdNot("alice@example.com", id)).thenReturn(false);
         when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
@@ -124,7 +132,7 @@ class UserServiceTest {
     void updateRejectsEmailUsedByAnotherUser() {
         UUID id = UUID.randomUUID();
         User user = UserTestData.user(id, "alice@example.com", "Alice", "Doe", null, Instant.now(), Instant.now());
-        UpdateUserRequest request = new UpdateUserRequest("bob@example.com", "Alice", "Doe");
+        UpdateUserRequest request = new UpdateUserRequest("bob@example.com", "Alice", "Doe", null, null);
         when(userRepository.findById(id)).thenReturn(Optional.of(user));
         when(userRepository.existsByEmailAndIdNot("bob@example.com", id)).thenReturn(true);
 
@@ -140,7 +148,7 @@ class UserServiceTest {
         Instant createdAt = Instant.parse("2026-01-01T10:00:00Z");
         Instant updatedAt = Instant.parse("2026-01-02T10:00:00Z");
         User user = UserTestData.user(id, "alice@example.com", "Alice", "Doe", "kc-1", createdAt, updatedAt);
-        UpdateUserRequest request = new UpdateUserRequest("alice@example.com", "Alicia", "Doe");
+        UpdateUserRequest request = new UpdateUserRequest("alice@example.com", "Alicia", "Doe", null, null);
         when(userRepository.findById(id)).thenReturn(Optional.of(user));
         when(userRepository.existsByEmailAndIdNot("alice@example.com", id)).thenReturn(false);
         when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));

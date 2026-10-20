@@ -2,6 +2,8 @@ package com.sdigital.platform.user.mapper;
 
 import com.sdigital.platform.user.dto.CreateUserRequest;
 import com.sdigital.platform.user.dto.UpdateUserRequest;
+import com.sdigital.platform.user.dto.UserAgencyDto;
+import com.sdigital.platform.user.dto.UserFunctionDto;
 import com.sdigital.platform.user.dto.UserResponse;
 import com.sdigital.platform.user.entity.User;
 import org.springframework.stereotype.Component;
@@ -21,12 +23,26 @@ public class UserMapper {
      * <p>{@code keycloakId} is not part of {@link UserResponse}, so it is never exposed.</p>
      */
     public UserResponse toResponse(User user) {
+        UserAgencyDto agencyDto = user.getAgency() == null ? null : new UserAgencyDto(
+                user.getAgency().getId(),
+                user.getAgency().getCode(),
+                user.getAgency().getName(),
+                user.getAgency().getStatus()
+        );
+        UserFunctionDto functionDto = user.getFunction() == null ? null : new UserFunctionDto(
+                user.getFunction().getId(),
+                user.getFunction().getCode(),
+                user.getFunction().getName(),
+                user.getFunction().getStatus()
+        );
         return new UserResponse(
                 user.getId(),
                 user.getEmail(),
                 user.getFirstName(),
                 user.getLastName(),
                 user.getStatus(),
+                agencyDto,
+                functionDto,
                 user.getCreatedAt(),
                 user.getUpdatedAt()
         );

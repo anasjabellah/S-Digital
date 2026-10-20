@@ -40,7 +40,7 @@ class UserMapperTest {
 
     @Test
     void toEntityMapsCreateRequestAndLeavesTechnicalFieldsUnset() {
-        CreateUserRequest request = new CreateUserRequest("alice@example.com", "Alice", "Doe");
+        CreateUserRequest request = new CreateUserRequest("alice@example.com", "Alice", "Doe", null, null);
 
         User user = userMapper.toEntity(request);
 
@@ -58,7 +58,7 @@ class UserMapperTest {
         Instant createdAt = Instant.parse("2026-01-01T10:00:00Z");
         Instant updatedAt = Instant.parse("2026-01-02T10:00:00Z");
         User user = UserTestData.user(id, "alice@example.com", "Alice", "Doe", "kc-1", createdAt, updatedAt);
-        UpdateUserRequest request = new UpdateUserRequest("alice2@example.com", "Alicia", "Smith");
+        UpdateUserRequest request = new UpdateUserRequest("alice2@example.com", "Alicia", "Smith", null, null);
 
         userMapper.applyUpdate(user, request);
 
