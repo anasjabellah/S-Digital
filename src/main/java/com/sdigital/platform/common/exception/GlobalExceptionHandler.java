@@ -1,5 +1,9 @@
 package com.sdigital.platform.common.exception;
 
+import com.sdigital.platform.agency.exception.AgencyCodeAlreadyUsedException;
+import com.sdigital.platform.agency.exception.AgencyNotFoundException;
+import com.sdigital.platform.function.exception.FunctionCodeAlreadyUsedException;
+import com.sdigital.platform.function.exception.FunctionNotFoundException;
 import com.sdigital.platform.user.exception.EmailAlreadyUsedException;
 import com.sdigital.platform.user.exception.UserNotFoundException;
 import org.slf4j.Logger;
@@ -98,6 +102,26 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(EmailAlreadyUsedException.class)
     public ProblemDetail handleEmailAlreadyUsed(EmailAlreadyUsedException ex) {
         return problem(HttpStatus.CONFLICT, TYPE_CONFLICT, "Conflict", "Email already in use");
+    }
+
+    @ExceptionHandler(AgencyNotFoundException.class)
+    public ProblemDetail handleAgencyNotFound(AgencyNotFoundException ex) {
+        return problem(HttpStatus.NOT_FOUND, TYPE_NOT_FOUND, "Not found", "Agency not found");
+    }
+
+    @ExceptionHandler(AgencyCodeAlreadyUsedException.class)
+    public ProblemDetail handleAgencyCodeAlreadyUsed(AgencyCodeAlreadyUsedException ex) {
+        return problem(HttpStatus.CONFLICT, TYPE_CONFLICT, "Conflict", "Agency code already in use");
+    }
+
+    @ExceptionHandler(FunctionNotFoundException.class)
+    public ProblemDetail handleFunctionNotFound(FunctionNotFoundException ex) {
+        return problem(HttpStatus.NOT_FOUND, TYPE_NOT_FOUND, "Not found", "Function not found");
+    }
+
+    @ExceptionHandler(FunctionCodeAlreadyUsedException.class)
+    public ProblemDetail handleFunctionCodeAlreadyUsed(FunctionCodeAlreadyUsedException ex) {
+        return problem(HttpStatus.CONFLICT, TYPE_CONFLICT, "Conflict", "Function code already in use");
     }
 
     /**

@@ -90,6 +90,20 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.PUT, "/api/v1/users/{id}").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.DELETE, "/api/v1/users/{id}").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.POST, "/api/v1/users/{id}/activate").hasRole("ADMIN")
+                        // Reference data (agencies & functions): shared read access for ADMIN and
+                        // MANAGER, ADMIN-only writes, mirroring the user-management policy.
+                        .requestMatchers(HttpMethod.GET, "/api/v1/agencies", "/api/v1/agencies/{id}")
+                                .hasAnyRole("ADMIN", "MANAGER")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/agencies").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.PUT, "/api/v1/agencies/{id}").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.DELETE, "/api/v1/agencies/{id}").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/agencies/{id}/activate").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.GET, "/api/v1/functions", "/api/v1/functions/{id}")
+                                .hasAnyRole("ADMIN", "MANAGER")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/functions").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.PUT, "/api/v1/functions/{id}").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.DELETE, "/api/v1/functions/{id}").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/functions/{id}/activate").hasRole("ADMIN")
                         // Any other business route still requires a valid JWT (and, through the
                         // guard above, a linked + ACTIVE local identity) until its own RBAC rule
                         // is defined for a route that actually exists.
