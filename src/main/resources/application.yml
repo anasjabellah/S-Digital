@@ -74,3 +74,25 @@ sdigital:
       client-role-ids: ${KEYCLOAK_CLIENT_ROLE_IDS:s-digital-api}
     cors:
       allowed-origins: ${SDIGITAL_CORS_ALLOWED_ORIGINS:}
+  # --- Keycloak Admin integration (realm-role management) ----------------------
+  # Used only by the ADMIN-only /api/v1/users/{id}/roles endpoints to consult and
+  # change a linked user's realm roles. All values come from environment variables;
+  # no secret is stored in Git.
+  #
+  # KEYCLOAK_ADMIN_SERVER_URL:  base URL of the Keycloak server,
+  #   e.g. http://localhost:8180
+  # KEYCLOAK_ADMIN_REALM:  realm that owns the users and the service-account client.
+  # KEYCLOAK_ADMIN_CLIENT_ID:  confidential client id used by the backend.
+  # KEYCLOAK_ADMIN_CLIENT_SECRET:  its secret (secret manager / env only).
+  # SDIGITAL_KEYCLOAK_ROLE_ALLOWLIST:  comma-separated realm roles the API may assign
+  #   or remove. Never include ADMIN. When empty, all role mutations fail closed
+  #   (the read endpoint returns no manageable roles).
+  keycloak:
+    admin:
+      server-url: ${KEYCLOAK_ADMIN_SERVER_URL:}
+      realm: ${KEYCLOAK_ADMIN_REALM:}
+      client-id: ${KEYCLOAK_ADMIN_CLIENT_ID:}
+      client-secret: ${KEYCLOAK_ADMIN_CLIENT_SECRET:}
+      allowlist: ${SDIGITAL_KEYCLOAK_ROLE_ALLOWLIST:}
+      connect-timeout: 3s
+      read-timeout: 5s

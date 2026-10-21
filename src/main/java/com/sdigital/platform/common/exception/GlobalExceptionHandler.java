@@ -8,6 +8,12 @@ import com.sdigital.platform.user.exception.EmailAlreadyUsedException;
 import com.sdigital.platform.user.exception.UserAgencyNotFoundException;
 import com.sdigital.platform.user.exception.UserFunctionNotFoundException;
 import com.sdigital.platform.user.exception.UserNotFoundException;
+import com.sdigital.platform.user.keycloak.exception.KeycloakIntegrationException;
+import com.sdigital.platform.user.keycloak.exception.KeycloakUnavailableException;
+import com.sdigital.platform.user.keycloak.exception.KeycloakUserNotFoundException;
+import com.sdigital.platform.user.keycloak.exception.RoleChangeDeniedException;
+import com.sdigital.platform.user.keycloak.exception.RoleNotAllowedException;
+import com.sdigital.platform.user.keycloak.exception.UserNotLinkedToKeycloakException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.mapping.PropertyReferenceException;
@@ -40,6 +46,9 @@ public class GlobalExceptionHandler {
     private static final URI TYPE_NOT_FOUND = URI.create("https://s-digital.io/errors/not-found");
     private static final URI TYPE_CONFLICT = URI.create("https://s-digital.io/errors/conflict");
     private static final URI TYPE_INTERNAL = URI.create("https://s-digital.io/errors/internal");
+    private static final URI TYPE_UNPROCESSABLE = URI.create("https://s-digital.io/errors/unprocessable");
+    private static final URI TYPE_FORBIDDEN = URI.create("https://s-digital.io/errors/forbidden");
+    private static final URI TYPE_SERVICE_UNAVAILABLE = URI.create("https://s-digital.io/errors/service-unavailable");
 
     /**
      * Bean Validation failures on request bodies ({@code @Valid}).
@@ -134,6 +143,66 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(FunctionCodeAlreadyUsedException.class)
     public ProblemDetail handleFunctionCodeAlreadyUsed(FunctionCodeAlreadyUsedException ex) {
         return problem(HttpStatus.CONFLICT, TYPE_CONFLICT, "Conflict", "Function code already in use");
+    }
+
+    /**
+     * Local user not linked to Keycloak: the request is understood but cannot be
+     * processed until the account is linked.
+     */
+    @ExceptionHandler(UserNotLinkedToKeycloakException.class)
+    public ProblemDetail handleUserNotLinked(UserNotLinkedToKeycloakException ex) {
+        return problem(HttpStatus.UNPROCESSABLE_ENTITY, TYPE_UNPROCESSABLE,
+                "Unprocessable entity", "User is not linked to a Keycloak account");
+    }
+
+    /**
+     * Target Keycloak account no longer exists. Distinct from the local 404 but
+     * presented with the same status so no account detail is leaked.
+     */
+    @ExceptionHandler(KeycloakUserNotFoundException.class)
+    public ProblemDetail handleKeycloakUserNotFound(KeycloakUserNotFoundException ex) {
+        return problem(HttpStatus.NOT_FOUND, TYPE_NOT_FOUND, "Not found", "User not found");
+    }
+
+    /**
+     * A role change refused by business policy (reserved role, self-modification,
+     * allowlist, disabled account or missing configuration). The detail stays generic.
+     */
+    @ExceptionHandler(RoleChangeDeniedException.class)
+    public ProblemDetail handleRoleChangeDenied(RoleChangeDeniedException ex) {
+        return problem(HttpStatus.FORBIDDEN, TYPE_FORBIDDEN, "Forbidden", "Role change is not allowed");
+    }
+
+    /**
+     * Unknown or invalid role name.
+     */
+    @ExceptionHandler(RoleNotAllowedException.class)
+    public ProblemDetail handleRoleNotAllowed(RoleNotAllowedException ex) {
+        return problem(HttpStatus.BAD_REQUEST, TYPE_BAD_REQUEST, "Bad request", "Invalid role");
+    }
+
+    /**
+     * Keycloak Admin integration unavailable or not configured. Never exposes the
+     * underlying cause.
+     */
+    @ExceptionHandler(KeycloakUnavailableException.class)
+    public ProblemDetail handleKeycloakUnavailable(KeycloakUnavailableException ex) {
+        log.warn("Keycloak admin integration unavailable: {}", ex.getClass().getSimpleName());
+        return problem(HttpStatus.SERVICE_UNAVAILABLE, TYPE_SERVICE_UNAVAILABLE,
+                "Service unavailable", "Role management is temporarily unavailable");
+    }
+
+    /**
+     * The backend's own Keycloak integration is misconfigured or not authorized.
+     * Reported as a server-side failure (500) rather than as a transient outage, so a
+     * bad service-account configuration is not masked as unavailability. No Keycloak
+     * detail is exposed.
+     */
+    @ExceptionHandler(KeycloakIntegrationException.class)
+    public ProblemDetail handleKeycloakIntegration(KeycloakIntegrationException ex) {
+        log.error("Keycloak admin integration misconfigured: {}", ex.getClass().getSimpleName());
+        return problem(HttpStatus.INTERNAL_SERVER_ERROR, TYPE_INTERNAL,
+                "Internal server error", "An unexpected error occurred");
     }
 
     /**

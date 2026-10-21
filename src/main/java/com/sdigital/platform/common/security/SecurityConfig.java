@@ -90,6 +90,10 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.PUT, "/api/v1/users/{id}").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.DELETE, "/api/v1/users/{id}").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.POST, "/api/v1/users/{id}/activate").hasRole("ADMIN")
+                        // Keycloak realm-role management: ADMIN only for both reads and writes,
+                        // since role assignments are a privileged administration concern.
+                        .requestMatchers("/api/v1/users/{id}/roles", "/api/v1/users/{id}/roles/**")
+                                .hasRole("ADMIN")
                         // Reference data (agencies & functions): shared read access for ADMIN and
                         // MANAGER, ADMIN-only writes, mirroring the user-management policy.
                         .requestMatchers(HttpMethod.GET, "/api/v1/agencies", "/api/v1/agencies/{id}")
