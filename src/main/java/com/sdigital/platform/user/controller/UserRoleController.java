@@ -48,7 +48,8 @@ public class UserRoleController {
 
     @Operation(summary = "List a user's realm roles",
             description = "Returns the manageable realm roles assigned to the user. Roles outside the "
-                    + "allowlist (including ADMIN) are never returned.")
+                    + "allowlist (including ADMIN) are never returned by name; their presence is only "
+                    + "signalled through the 'hasUnmanageableRoles' flag.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Roles returned"),
             @ApiResponse(responseCode = "400", description = "Malformed user id",
@@ -68,7 +69,8 @@ public class UserRoleController {
 
     @Operation(summary = "Assign a realm role",
             description = "Assigns a single allowlisted realm role to the user. ADMIN cannot be assigned "
-                    + "and an administrator cannot modify their own roles.")
+                    + "and an administrator cannot modify their own roles. The operation is idempotent: "
+                    + "assigning an already-assigned role succeeds (200) without side effects.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Role assigned; returns the updated roles"),
             @ApiResponse(responseCode = "400", description = "Invalid role name",
@@ -91,7 +93,8 @@ public class UserRoleController {
 
     @Operation(summary = "Remove a realm role",
             description = "Removes a single allowlisted realm role from the user. ADMIN cannot be removed "
-                    + "and an administrator cannot modify their own roles.")
+                    + "and an administrator cannot modify their own roles. The operation is idempotent: "
+                    + "removing an unassigned role succeeds (200) without side effects.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Role removed; returns the updated roles"),
             @ApiResponse(responseCode = "400", description = "Invalid role name",

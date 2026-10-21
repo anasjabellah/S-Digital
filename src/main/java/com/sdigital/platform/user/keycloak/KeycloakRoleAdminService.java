@@ -59,6 +59,8 @@ public class KeycloakRoleAdminService {
     static final String REASON_RESERVED_ROLE = "RESERVED_ROLE_DENIED";
     static final String REASON_NOT_ALLOWLISTED = "NOT_ALLOWLISTED";
     static final String REASON_KEYCLOAK_DISABLED = "KEYCLOAK_ACCOUNT_DISABLED";
+    static final String REASON_NOT_LINKED = "USER_NOT_LINKED_TO_KEYCLOAK";
+    static final String REASON_KEYCLOAK_USER_NOT_FOUND = "KEYCLOAK_USER_NOT_FOUND";
 
     private final UserRepository userRepository;
     private final KeycloakAdminClient keycloakAdminClient;
@@ -77,7 +79,8 @@ public class KeycloakRoleAdminService {
 
     /**
      * Lists the target user's realm roles, restricted to the allowlist. Roles outside the
-     * allowlist (including {@code ADMIN}) are never returned.
+     * allowlist (including {@code ADMIN}) are never returned by name; their presence is
+     * only summarised through {@link UserRolesResponse#hasUnmanageableRoles()}.
      */
     @Transactional(readOnly = true)
     public UserRolesResponse getRoles(UUID targetUserId) {
@@ -89,7 +92,8 @@ public class KeycloakRoleAdminService {
                 .filter(allowlist::contains)
                 .map(UserRoleDto::new)
                 .toList();
-        return new UserRolesResponse(visible);
+        boolean hasUnmanageable = roles.stream().anyMatch(role -> !allowlist.contains(role));
+        return new UserRolesResponse(visible, hasUnmanageable);
     }
 
     /**
@@ -136,24 +140,61 @@ public class KeycloakRoleAdminService {
      * Applies configuration guards, allowlist, reserved-role and self-modification rules.
      * Returns the mutation context (actor + resolved target) so the caller can perform the
      * Keycloak call and audit it.
+     *
+     * <p>Each refused mutation is recorded once on the audit logger. The actor is resolved
+     * up front (it is available from the security context even when the target cannot be
+     * resolved) so refusals such as an unknown target are still attributable.</p>
      */
     private MutationContext prepareMutation(UUID targetUserId, String roleName, String action) {
         ensureIntegrationConfigured();
-        ensureAllowlistConfigured();
-        ensureRoleIsManageable(roleName);
 
-        TargetUser target = resolveTarget(targetUserId, true);
         ActorContext actor = resolveActor();
+
+        if (!properties.isAllowlistConfigured()) {
+            throw deny(actor, targetUserId, roleName, action, REASON_NOT_ALLOWLISTED,
+                    new RoleChangeDeniedException("Role management is disabled: no manageable roles configured"));
+        }
+        if (!isRoleManageable(roleName)) {
+            String reason = RESERVED_ADMIN_ROLE.equalsIgnoreCase(roleName)
+                    ? REASON_RESERVED_ROLE : REASON_NOT_ALLOWLISTED;
+            throw deny(actor, targetUserId, roleName, action, reason,
+                    new RoleChangeDeniedException("Role is not manageable through the API"));
+        }
+
+        TargetUser target;
+        try {
+            target = resolveTarget(targetUserId, true);
+        } catch (UserNotLinkedToKeycloakException ex) {
+            throw deny(actor, targetUserId, roleName, action, REASON_NOT_LINKED, ex);
+        } catch (KeycloakUserNotFoundException ex) {
+            throw deny(actor, targetUserId, roleName, action, REASON_KEYCLOAK_USER_NOT_FOUND, ex);
+        } catch (RoleChangeDeniedException ex) {
+            throw deny(actor, targetUserId, roleName, action, REASON_KEYCLOAK_DISABLED, ex);
+        }
 
         String actorKeycloakId = actor.keycloakId();
         if (StringUtils.hasText(actorKeycloakId)
                 && actorKeycloakId.equals(target.keycloakId())) {
-            auditLogger.roleChangeDenied(actor.localUserId(), target.localUserId(), roleName,
-                    action, REASON_SELF_MODIFICATION);
-            throw new RoleChangeDeniedException("Modifying your own roles is not allowed");
+            throw deny(actor, target.localUserId(), roleName, action, REASON_SELF_MODIFICATION,
+                    new RoleChangeDeniedException("Modifying your own roles is not allowed"));
         }
 
         return new MutationContext(actor.localUserId(), actorKeycloakId, target);
+    }
+
+    /**
+     * Records a single structured denial on the audit logger and returns the supplied
+     * exception so the caller can {@code throw} it. Kept in one place so a refusal is
+     * audited exactly once, with no secret, token or raw Keycloak payload.
+     */
+    private RuntimeException deny(ActorContext actor,
+                                  UUID targetUserId,
+                                  String roleName,
+                                  String action,
+                                  String reasonCode,
+                                  RuntimeException toThrow) {
+        auditLogger.roleChangeDenied(actor.localUserId(), targetUserId, roleName, action, reasonCode);
+        return toThrow;
     }
 
     private void ensureIntegrationConfigured() {
@@ -162,22 +203,15 @@ public class KeycloakRoleAdminService {
         }
     }
 
-    private void ensureAllowlistConfigured() {
-        if (!properties.isAllowlistConfigured()) {
-            throw new RoleChangeDeniedException("Role management is disabled: no manageable roles configured");
-        }
-    }
-
     /**
-     * Provisional role policy, centralized for future review.
+     * Provisional role policy, centralized for future review. Does not log: the caller
+     * audits the refusal with the actor context.
      */
-    private void ensureRoleIsManageable(String roleName) {
+    private boolean isRoleManageable(String roleName) {
         if (RESERVED_ADMIN_ROLE.equalsIgnoreCase(roleName)) {
-            throw new RoleChangeDeniedException("The ADMIN role cannot be managed through the API");
+            return false;
         }
-        if (!properties.allowlistAsSet().contains(roleName)) {
-            throw new RoleChangeDeniedException("Role is not in the manageable allowlist");
-        }
+        return properties.allowlistAsSet().contains(roleName);
     }
 
     private TargetUser resolveTarget(UUID targetUserId, boolean requireEnabled) {

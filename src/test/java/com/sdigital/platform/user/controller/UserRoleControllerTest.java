@@ -57,6 +57,30 @@ class UserRoleControllerTest {
     }
 
     @Test
+    void getRolesReturns200WithHasUnmanageableRolesFlagFalse() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(keycloakRoleAdminService.getRoles(id)).thenReturn(roles("MANAGER"));
+
+        mockMvc.perform(get("/api/v1/users/{id}/roles", id))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.roles[0].name").value("MANAGER"))
+                .andExpect(jsonPath("$.hasUnmanageableRoles").value(false));
+    }
+
+    @Test
+    void getRolesReturns200WithHasUnmanageableRolesFlagTrueWithoutLeakingNames() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(keycloakRoleAdminService.getRoles(id)).thenReturn(
+                new UserRolesResponse(java.util.List.of(new UserRoleDto("MANAGER")), true));
+
+        mockMvc.perform(get("/api/v1/users/{id}/roles", id))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.roles[0].name").value("MANAGER"))
+                .andExpect(jsonPath("$.hasUnmanageableRoles").value(true))
+                .andExpect(jsonPath("$.roles.length()").value(1));
+    }
+
+    @Test
     void getRolesReturns200() throws Exception {
         UUID id = UUID.randomUUID();
         when(keycloakRoleAdminService.getRoles(id)).thenReturn(roles("MANAGER"));
