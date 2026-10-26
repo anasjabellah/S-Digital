@@ -19,6 +19,8 @@ public class KeycloakUpstreamException extends RuntimeException {
         UNAUTHENTICATED,
         /** Keycloak refused the operation (403) — the service account lacks the permission. */
         FORBIDDEN,
+        /** Keycloak rejected the request because the identity already exists (409). */
+        CONFLICT,
         /** Keycloak throttled the request (429). */
         RATE_LIMITED,
         /** Keycloak returned a server error (5xx). */

@@ -57,6 +57,14 @@ management:
 # bearer token (business endpoints answer 401). This keeps local development and
 # the tests independent of a running Keycloak; override it to enable auth.
 #
+# KEYCLOAK_AUDIENCE: expected audience of the S-Digital API access tokens, i.e. the
+#   value that must appear in the token's `aud` claim. Defaults to `s-digital-api`,
+#   the API client declared in keycloak/import/s-digital-realm.json. A token with a
+#   missing or different audience is rejected with 401. The imported realm defines
+#   the matching Audience protocol mapper ("s-digital-api-audience") on the
+#   `s-digital-api` client; an already-running realm must be re-imported or updated
+#   before it emits that claim. A blank value fails closed.
+#
 # SDIGITAL_CORS_ALLOWED_ORIGINS: comma-separated list of allowed browser origins
 #   (never "*"), for example:
 #   SDIGITAL_CORS_ALLOWED_ORIGINS=http://localhost:5173,https://app.s-digital.io
@@ -71,12 +79,14 @@ sdigital:
   security:
     keycloak:
       issuer-uri: ${KEYCLOAK_ISSUER_URI:}
+      audience: ${KEYCLOAK_AUDIENCE:s-digital-api}
       client-role-ids: ${KEYCLOAK_CLIENT_ROLE_IDS:s-digital-api}
     cors:
       allowed-origins: ${SDIGITAL_CORS_ALLOWED_ORIGINS:}
-  # --- Keycloak Admin integration (realm-role management) ----------------------
-  # Used only by the ADMIN-only /api/v1/users/{id}/roles endpoints to consult and
-  # change a linked user's realm roles. All values come from environment variables;
+  # --- Keycloak Admin integration (user provisioning + realm-role management) --
+  # Used by POST /api/v1/users/provision to create the Keycloak identity, and by the
+  # ADMIN-only /api/v1/users/{id}/roles endpoints to consult and change a linked
+  # user's realm roles. All values come from environment variables;
   # no secret is stored in Git.
   #
   # KEYCLOAK_ADMIN_SERVER_URL:  base URL of the Keycloak server,

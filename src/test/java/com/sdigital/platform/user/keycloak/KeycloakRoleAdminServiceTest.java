@@ -101,7 +101,7 @@ class KeycloakRoleAdminServiceTest {
     void getRolesReturnsOnlyAllowlistedRoles() {
         authenticateAs("admin-sub");
         when(userRepository.findById(TARGET_ID)).thenReturn(Optional.of(linkedTarget()));
-        when(keycloakAdminClient.findUserId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
+        when(keycloakAdminClient.findUserIdByInternalId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
         when(keycloakAdminClient.listRealmRoles(TARGET_KC_ID)).thenReturn(List.of("ADMIN", "MANAGER", "OTHER"));
 
         UserRolesResponse response = service.getRoles(TARGET_ID);
@@ -128,7 +128,7 @@ class KeycloakRoleAdminServiceTest {
     @Test
     void getRolesThrowsWhenKeycloakUserMissing() {
         when(userRepository.findById(TARGET_ID)).thenReturn(Optional.of(linkedTarget()));
-        when(keycloakAdminClient.findUserId(TARGET_SUB)).thenReturn(null);
+        when(keycloakAdminClient.findUserIdByInternalId(TARGET_SUB)).thenReturn(null);
 
         assertThatThrownBy(() -> service.getRoles(TARGET_ID))
                 .isInstanceOf(KeycloakUserNotFoundException.class);
@@ -148,7 +148,7 @@ class KeycloakRoleAdminServiceTest {
     void assignRoleSucceedsForAllowlistedRole() {
         authenticateAs("admin-sub");
         when(userRepository.findById(TARGET_ID)).thenReturn(Optional.of(linkedTarget()));
-        when(keycloakAdminClient.findUserId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
+        when(keycloakAdminClient.findUserIdByInternalId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
         when(keycloakAdminClient.isUserEnabled(TARGET_KC_ID)).thenReturn(true);
         // pre-state: role not assigned; post-state: role assigned (returned by getRoles)
         when(keycloakAdminClient.listRealmRoles(TARGET_KC_ID))
@@ -207,7 +207,7 @@ class KeycloakRoleAdminServiceTest {
         User self = linkedTarget();
         when(userRepository.findById(TARGET_ID)).thenReturn(Optional.of(self));
         when(userRepository.findByKeycloakId(TARGET_SUB)).thenReturn(Optional.of(self));
-        when(keycloakAdminClient.findUserId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
+        when(keycloakAdminClient.findUserIdByInternalId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
         when(keycloakAdminClient.isUserEnabled(TARGET_KC_ID)).thenReturn(true);
         authenticateAs(TARGET_SUB);
 
@@ -224,7 +224,7 @@ class KeycloakRoleAdminServiceTest {
     void assignRoleRejectsUnknownRoleInKeycloak() {
         authenticateAs("admin-sub");
         when(userRepository.findById(TARGET_ID)).thenReturn(Optional.of(linkedTarget()));
-        when(keycloakAdminClient.findUserId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
+        when(keycloakAdminClient.findUserIdByInternalId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
         when(keycloakAdminClient.isUserEnabled(TARGET_KC_ID)).thenReturn(true);
         when(keycloakAdminClient.addRealmRole(TARGET_KC_ID, "MANAGER")).thenReturn(false);
 
@@ -238,7 +238,7 @@ class KeycloakRoleAdminServiceTest {
     void removeRoleSucceedsForAllowlistedRole() {
         authenticateAs("admin-sub");
         when(userRepository.findById(TARGET_ID)).thenReturn(Optional.of(linkedTarget()));
-        when(keycloakAdminClient.findUserId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
+        when(keycloakAdminClient.findUserIdByInternalId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
         when(keycloakAdminClient.isUserEnabled(TARGET_KC_ID)).thenReturn(true);
         // pre-state: role present; post-state: role removed
         when(keycloakAdminClient.listRealmRoles(TARGET_KC_ID))
@@ -270,7 +270,7 @@ class KeycloakRoleAdminServiceTest {
     void assignRoleRejectsDisabledKeycloakAccountWithoutMutating() {
         authenticateAs("admin-sub");
         when(userRepository.findById(TARGET_ID)).thenReturn(Optional.of(linkedTarget()));
-        when(keycloakAdminClient.findUserId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
+        when(keycloakAdminClient.findUserIdByInternalId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
         when(keycloakAdminClient.isUserEnabled(TARGET_KC_ID)).thenReturn(false);
 
         assertThatThrownBy(() -> service.assignRole(TARGET_ID, "MANAGER"))
@@ -282,7 +282,7 @@ class KeycloakRoleAdminServiceTest {
     void removeRoleRejectsDisabledKeycloakAccountWithoutMutating() {
         authenticateAs("admin-sub");
         when(userRepository.findById(TARGET_ID)).thenReturn(Optional.of(linkedTarget()));
-        when(keycloakAdminClient.findUserId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
+        when(keycloakAdminClient.findUserIdByInternalId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
         when(keycloakAdminClient.isUserEnabled(TARGET_KC_ID)).thenReturn(false);
 
         assertThatThrownBy(() -> service.removeRole(TARGET_ID, "MANAGER"))
@@ -294,7 +294,7 @@ class KeycloakRoleAdminServiceTest {
     void assignRoleProceedsWhenKeycloakAccountEnabled() {
         authenticateAs("admin-sub");
         when(userRepository.findById(TARGET_ID)).thenReturn(Optional.of(linkedTarget()));
-        when(keycloakAdminClient.findUserId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
+        when(keycloakAdminClient.findUserIdByInternalId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
         when(keycloakAdminClient.isUserEnabled(TARGET_KC_ID)).thenReturn(true);
         when(keycloakAdminClient.addRealmRole(TARGET_KC_ID, "MANAGER")).thenReturn(true);
         when(keycloakAdminClient.listRealmRoles(TARGET_KC_ID)).thenReturn(List.of("MANAGER"));
@@ -310,7 +310,7 @@ class KeycloakRoleAdminServiceTest {
     void keycloakFailureBecomesUnavailable() {
         authenticateAs("admin-sub");
         when(userRepository.findById(TARGET_ID)).thenReturn(Optional.of(linkedTarget()));
-        when(keycloakAdminClient.findUserId(TARGET_SUB)).thenThrow(new IllegalStateException("boom"));
+        when(keycloakAdminClient.findUserIdByInternalId(TARGET_SUB)).thenThrow(new IllegalStateException("boom"));
 
         assertThatThrownBy(() -> service.getRoles(TARGET_ID))
                 .isInstanceOf(KeycloakUnavailableException.class)
@@ -323,7 +323,7 @@ class KeycloakRoleAdminServiceTest {
     void assignRoleMutationServerErrorBecomesUnavailable() {
         authenticateAs("admin-sub");
         when(userRepository.findById(TARGET_ID)).thenReturn(Optional.of(linkedTarget()));
-        when(keycloakAdminClient.findUserId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
+        when(keycloakAdminClient.findUserIdByInternalId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
         when(keycloakAdminClient.isUserEnabled(TARGET_KC_ID)).thenReturn(true);
         when(keycloakAdminClient.addRealmRole(TARGET_KC_ID, "MANAGER")).thenThrow(
                 new KeycloakUpstreamException(KeycloakUpstreamException.Kind.SERVER_ERROR, 500, "kc"));
@@ -337,7 +337,7 @@ class KeycloakRoleAdminServiceTest {
     void removeRoleMutationNetworkFailureBecomesUnavailable() {
         authenticateAs("admin-sub");
         when(userRepository.findById(TARGET_ID)).thenReturn(Optional.of(linkedTarget()));
-        when(keycloakAdminClient.findUserId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
+        when(keycloakAdminClient.findUserIdByInternalId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
         when(keycloakAdminClient.isUserEnabled(TARGET_KC_ID)).thenReturn(true);
         when(keycloakAdminClient.removeRealmRole(TARGET_KC_ID, "MANAGER"))
                 .thenThrow(new org.springframework.web.client.ResourceAccessException("timeout"));
@@ -351,7 +351,7 @@ class KeycloakRoleAdminServiceTest {
     void mutationForbiddenUpstreamBecomesIntegrationFailureNotUnavailable() {
         authenticateAs("admin-sub");
         when(userRepository.findById(TARGET_ID)).thenReturn(Optional.of(linkedTarget()));
-        when(keycloakAdminClient.findUserId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
+        when(keycloakAdminClient.findUserIdByInternalId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
         when(keycloakAdminClient.isUserEnabled(TARGET_KC_ID)).thenReturn(true);
         when(keycloakAdminClient.addRealmRole(TARGET_KC_ID, "MANAGER")).thenThrow(
                 new KeycloakUpstreamException(KeycloakUpstreamException.Kind.FORBIDDEN, 403, "kc"));
@@ -367,7 +367,7 @@ class KeycloakRoleAdminServiceTest {
     void assignRoleIsIdempotentWhenRoleAlreadyPresent() {
         authenticateAs("admin-sub");
         when(userRepository.findById(TARGET_ID)).thenReturn(Optional.of(linkedTarget()));
-        when(keycloakAdminClient.findUserId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
+        when(keycloakAdminClient.findUserIdByInternalId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
         when(keycloakAdminClient.isUserEnabled(TARGET_KC_ID)).thenReturn(true);
         // pre-state: already present
         when(keycloakAdminClient.listRealmRoles(TARGET_KC_ID))
@@ -391,7 +391,7 @@ class KeycloakRoleAdminServiceTest {
     void removeRoleIsIdempotentWhenRoleAbsent() {
         authenticateAs("admin-sub");
         when(userRepository.findById(TARGET_ID)).thenReturn(Optional.of(linkedTarget()));
-        when(keycloakAdminClient.findUserId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
+        when(keycloakAdminClient.findUserIdByInternalId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
         when(keycloakAdminClient.isUserEnabled(TARGET_KC_ID)).thenReturn(true);
         // pre-state: absent
         when(keycloakAdminClient.listRealmRoles(TARGET_KC_ID))
@@ -411,7 +411,7 @@ class KeycloakRoleAdminServiceTest {
     void mutationIsNeverRetriedOnFailure() {
         authenticateAs("admin-sub");
         when(userRepository.findById(TARGET_ID)).thenReturn(Optional.of(linkedTarget()));
-        when(keycloakAdminClient.findUserId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
+        when(keycloakAdminClient.findUserIdByInternalId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
         when(keycloakAdminClient.isUserEnabled(TARGET_KC_ID)).thenReturn(true);
         when(keycloakAdminClient.addRealmRole(TARGET_KC_ID, "MANAGER"))
                 .thenThrow(new org.springframework.web.client.ResourceAccessException("timeout"));
@@ -451,7 +451,7 @@ class KeycloakRoleAdminServiceTest {
     void assignRoleAuditsDisabledAccountRefusal() {
         authenticateAs("admin-sub");
         when(userRepository.findById(TARGET_ID)).thenReturn(Optional.of(linkedTarget()));
-        when(keycloakAdminClient.findUserId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
+        when(keycloakAdminClient.findUserIdByInternalId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
         when(keycloakAdminClient.isUserEnabled(TARGET_KC_ID)).thenReturn(false);
 
         assertThatThrownBy(() -> service.assignRole(TARGET_ID, "MANAGER"))
@@ -480,7 +480,7 @@ class KeycloakRoleAdminServiceTest {
     void removeRoleAuditsKeycloakUserNotFoundRefusal() {
         authenticateAs("admin-sub");
         when(userRepository.findById(TARGET_ID)).thenReturn(Optional.of(linkedTarget()));
-        when(keycloakAdminClient.findUserId(TARGET_SUB)).thenReturn(null);
+        when(keycloakAdminClient.findUserIdByInternalId(TARGET_SUB)).thenReturn(null);
 
         assertThatThrownBy(() -> service.removeRole(TARGET_ID, "MANAGER"))
                 .isInstanceOf(KeycloakUserNotFoundException.class);
@@ -494,7 +494,7 @@ class KeycloakRoleAdminServiceTest {
     void successfulMutationAuditsChangeAndNoDenial() {
         authenticateAs("admin-sub");
         when(userRepository.findById(TARGET_ID)).thenReturn(Optional.of(linkedTarget()));
-        when(keycloakAdminClient.findUserId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
+        when(keycloakAdminClient.findUserIdByInternalId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
         when(keycloakAdminClient.isUserEnabled(TARGET_KC_ID)).thenReturn(true);
         when(keycloakAdminClient.listRealmRoles(TARGET_KC_ID))
                 .thenReturn(List.of())
@@ -516,7 +516,7 @@ class KeycloakRoleAdminServiceTest {
     void getRolesReportsNoRolesWhenNoneAssigned() {
         authenticateAs("admin-sub");
         when(userRepository.findById(TARGET_ID)).thenReturn(Optional.of(linkedTarget()));
-        when(keycloakAdminClient.findUserId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
+        when(keycloakAdminClient.findUserIdByInternalId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
         when(keycloakAdminClient.listRealmRoles(TARGET_KC_ID)).thenReturn(List.of());
 
         UserRolesResponse response = service.getRoles(TARGET_ID);
@@ -529,7 +529,7 @@ class KeycloakRoleAdminServiceTest {
     void getRolesReportsManageableRolesWithoutUnmanageableFlag() {
         authenticateAs("admin-sub");
         when(userRepository.findById(TARGET_ID)).thenReturn(Optional.of(linkedTarget()));
-        when(keycloakAdminClient.findUserId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
+        when(keycloakAdminClient.findUserIdByInternalId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
         when(keycloakAdminClient.listRealmRoles(TARGET_KC_ID)).thenReturn(List.of("MANAGER", "USER"));
 
         UserRolesResponse response = service.getRoles(TARGET_ID);
@@ -542,7 +542,7 @@ class KeycloakRoleAdminServiceTest {
     void getRolesSignalsUnmanageableRolesWithoutLeakingTheirNames() {
         authenticateAs("admin-sub");
         when(userRepository.findById(TARGET_ID)).thenReturn(Optional.of(linkedTarget()));
-        when(keycloakAdminClient.findUserId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
+        when(keycloakAdminClient.findUserIdByInternalId(TARGET_SUB)).thenReturn(TARGET_KC_ID);
         when(keycloakAdminClient.listRealmRoles(TARGET_KC_ID)).thenReturn(List.of("ADMIN", "OTHER", "MANAGER"));
 
         UserRolesResponse response = service.getRoles(TARGET_ID);

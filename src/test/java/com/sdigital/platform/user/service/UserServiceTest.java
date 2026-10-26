@@ -9,6 +9,7 @@ import com.sdigital.platform.agency.entity.Agency;
 import com.sdigital.platform.agency.repository.AgencyRepository;
 import com.sdigital.platform.function.repository.FunctionRepository;
 import com.sdigital.platform.user.dto.CreateUserRequest;
+import com.sdigital.platform.user.dto.UpdateCurrentUserRequest;
 import com.sdigital.platform.user.dto.UpdateUserRequest;
 import com.sdigital.platform.user.dto.UserResponse;
 import com.sdigital.platform.user.entity.User;
@@ -20,6 +21,7 @@ import com.sdigital.platform.user.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Page;
@@ -174,6 +176,73 @@ class UserServiceTest {
                 .isInstanceOf(IllegalStateException.class);
 
         verify(userRepository, never()).findById(any(UUID.class));
+    }
+
+    @Test
+    void updateCurrentUserTrimsAndUpdatesNamesAndAuditsChangedFields() {
+        UUID id = UUID.randomUUID();
+        Instant createdAt = Instant.parse("2026-01-01T10:00:00Z");
+        Instant updatedAt = Instant.parse("2026-01-02T10:00:00Z");
+        User user = UserTestData.user(id, "alice@example.com", "Alice", "Doe", "kc-1", createdAt, updatedAt);
+        when(userIdentityService.resolveCurrentLocalUser()).thenReturn(Optional.of(user));
+        when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(currentActorResolver.resolveCurrentActorUserId()).thenReturn(ACTOR_ID);
+
+        UserResponse response = userService.updateCurrentUser(
+                new UpdateCurrentUserRequest("  Alicia ", " Smith "));
+
+        assertThat(response.firstName()).isEqualTo("Alicia");
+        assertThat(response.lastName()).isEqualTo("Smith");
+        verify(userRepository).save(user);
+        verify(auditLogService).record(eq(ACTOR_ID), eq("USER_PROFILE_UPDATED"), eq("USER"),
+                eq(id.toString()), eq(AuditOutcome.SUCCESS),
+                eq(Map.of("fields", List.of("firstName", "lastName"))));
+    }
+
+    @Test
+    void updateCurrentUserNeverTouchesAdministrationFields() {
+        UUID id = UUID.randomUUID();
+        Instant createdAt = Instant.parse("2026-01-01T10:00:00Z");
+        Instant updatedAt = Instant.parse("2026-01-02T10:00:00Z");
+        User user = UserTestData.user(id, "alice@example.com", "Alice", "Doe", "kc-1", createdAt, updatedAt);
+        when(userIdentityService.resolveCurrentLocalUser()).thenReturn(Optional.of(user));
+        when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        userService.updateCurrentUser(new UpdateCurrentUserRequest("Alicia", "Smith"));
+
+        assertThat(user.getEmail()).isEqualTo("alice@example.com");
+        assertThat(user.getKeycloakId()).isEqualTo("kc-1");
+        assertThat(user.getStatus()).isEqualTo(UserStatus.ACTIVE);
+        assertThat(user.getAgency()).isNull();
+        assertThat(user.getFunction()).isNull();
+        assertThat(user.getCreatedAt()).isEqualTo(createdAt);
+        assertThat(user.getUpdatedAt()).isEqualTo(updatedAt);
+        verify(userRepository, never()).existsByEmail(any());
+        verify(userRepository, never()).existsByEmailAndIdNot(any(), any());
+    }
+
+    @Test
+    void updateCurrentUserWritesNoAuditEventWhenNamesAreUnchanged() {
+        UUID id = UUID.randomUUID();
+        User user = UserTestData.user(id, "alice@example.com", "Alice", "Doe", null, Instant.now(), Instant.now());
+        when(userIdentityService.resolveCurrentLocalUser()).thenReturn(Optional.of(user));
+        when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        userService.updateCurrentUser(new UpdateCurrentUserRequest("Alice", "Doe"));
+
+        verify(auditLogService, never()).record(any(), any(), any(), any(), any(), anyMap());
+    }
+
+    @Test
+    void updateCurrentUserThrowsWhenIdentityIsNotLinked() {
+        when(userIdentityService.resolveCurrentLocalUser()).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> userService.updateCurrentUser(new UpdateCurrentUserRequest("Alice", "Doe")))
+                .isInstanceOf(IllegalStateException.class);
+
+        verify(userRepository, never()).save(any(User.class));
+        verify(userRepository, never()).findById(any(UUID.class));
+        verify(userRepository, never()).findByEmail(any());
     }
 
     @Test
@@ -349,6 +418,67 @@ class UserServiceTest {
     }
 
     // --- persistent audit ----------------------------------------------------------------------
+
+    @Test
+    void createProvisionedPersistsKeycloakIdAndAuditsLinkFlag() {
+        UUID userId = UUID.randomUUID();
+        when(userRepository.existsByEmail("ada@example.com")).thenReturn(false);
+        when(userRepository.saveAndFlush(any(User.class))).thenAnswer(invocation -> {
+            User saved = invocation.getArgument(0);
+            UserTestData.setId(saved, userId);
+            return saved;
+        });
+        when(currentActorResolver.resolveCurrentActorUserId()).thenReturn(ACTOR_ID);
+
+        UserResponse response = userService.createProvisioned(
+                new CreateUserRequest("  ADA@example.com ", "Ada", "Lovelace", null, null),
+                "kc-internal-1");
+
+        assertThat(response.email()).isEqualTo("ada@example.com");
+        assertThat(response.status()).isEqualTo(UserStatus.ACTIVE);
+        ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).saveAndFlush(captor.capture());
+        assertThat(captor.getValue().getKeycloakId()).isEqualTo("kc-internal-1");
+        verify(auditLogService).record(eq(ACTOR_ID), eq("USER_CREATED"), eq("USER"),
+                eq(userId.toString()), eq(AuditOutcome.SUCCESS),
+                eq(Map.of("status", "ACTIVE", "keycloakLinked", true)));
+    }
+
+    @Test
+    void createProvisionedRejectsDuplicateEmailBeforeSaving() {
+        when(userRepository.existsByEmail("ada@example.com")).thenReturn(true);
+
+        assertThatThrownBy(() -> userService.createProvisioned(
+                new CreateUserRequest("ada@example.com", "Ada", "Lovelace", null, null),
+                "kc-internal-1"))
+                .isInstanceOf(EmailAlreadyUsedException.class);
+
+        verify(userRepository, never()).saveAndFlush(any(User.class));
+        verify(auditLogService, never()).record(any(), any(), any(), any(), any(), anyMap());
+    }
+
+    @Test
+    void validateAssignmentsRejectsMissingAgencyWithoutWriting() {
+        UUID agencyId = UUID.randomUUID();
+        when(agencyRepository.findById(agencyId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> userService.validateAssignments(agencyId, null))
+                .isInstanceOf(com.sdigital.platform.user.exception.UserAgencyNotFoundException.class);
+
+        verify(userRepository, never()).save(any(User.class));
+        verify(userRepository, never()).saveAndFlush(any(User.class));
+    }
+
+    @Test
+    void createProvisionedRejectsBlankKeycloakId() {
+        assertThatThrownBy(() -> userService.createProvisioned(
+                new CreateUserRequest("ada@example.com", "Ada", "Lovelace", null, null),
+                "   "))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        verify(userRepository, never()).existsByEmail(any());
+        verify(userRepository, never()).saveAndFlush(any(User.class));
+    }
 
     @Test
     void createAuditsUserCreatedWithoutPersonalData() {

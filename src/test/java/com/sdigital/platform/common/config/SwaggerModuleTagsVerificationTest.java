@@ -51,8 +51,10 @@ class SwaggerModuleTagsVerificationTest {
         assertThat(json).contains("/api/v1/notifications/unread");
         assertThat(json).contains("/api/v1/notifications/unread/count");
         assertThat(json).contains("/api/v1/notifications/read/all");
+        assertThat(json).contains("/api/v1/notifications/{id}");
         assertThat(json).contains("/api/v1/email-templates");
         assertThat(json).contains("/api/v1/users/");
+        assertThat(json).contains("/api/v1/users/me");
         assertThat(json).contains("/api/v1/agencies/");
         assertThat(json).contains("/api/v1/functions/");
 

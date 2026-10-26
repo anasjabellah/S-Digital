@@ -18,11 +18,13 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
 import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
 import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
+import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 import org.springframework.test.context.TestPropertySource;
@@ -102,6 +104,30 @@ class SecurityConfigTest {
     }
 
     @Test
+    void businessEndpointReturns401WhenAudienceIsMissing() throws Exception {
+        String token = TestJwtConfiguration.signedTokenWithoutAudience();
+
+        mockMvc.perform(get("/api/v1/users").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void businessEndpointReturns401WhenAudienceIsWrong() throws Exception {
+        String token = TestJwtConfiguration.signedTokenWithAudience("another-api");
+
+        mockMvc.perform(get("/api/v1/users").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void businessEndpointReturns401WhenIssuerIsWrong() throws Exception {
+        String token = TestJwtConfiguration.signedTokenWithIssuer("https://attacker.test/realms/s-digital");
+
+        mockMvc.perform(get("/api/v1/users").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void businessEndpointReturns200WithValidToken() throws Exception {
         when(userIdentityService.isCurrentUserActiveLinked()).thenReturn(true);
         when(userService.getAll(any(), any(), any(Pageable.class))).thenReturn(new PageImpl<>(List.of()));
@@ -156,16 +182,40 @@ class SecurityConfigTest {
     @TestConfiguration
     static class TestJwtConfiguration {
 
+        static final String ISSUER = "https://keycloak.test/realms/s-digital";
+        static final String AUDIENCE = "s-digital-api";
+
         private static final KeyPair KEY_PAIR = generateKeyPair();
         private static final KeyPair FOREIGN_KEY_PAIR = generateKeyPair();
 
         @Bean
         JwtDecoder jwtDecoder() {
-            return NimbusJwtDecoder.withPublicKey((RSAPublicKey) KEY_PAIR.getPublic()).build();
+            NimbusJwtDecoder decoder = NimbusJwtDecoder
+                    .withPublicKey((RSAPublicKey) KEY_PAIR.getPublic())
+                    .build();
+            decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
+                    JwtValidators.createDefaultWithIssuer(ISSUER),
+                    new KeycloakAudienceValidator(AUDIENCE)));
+            return decoder;
         }
 
         static String signedToken(Instant issuedAt, Instant expiresAt) {
-            return encode(KEY_PAIR, issuedAt, expiresAt);
+            return encode(KEY_PAIR, "test-user", ISSUER, List.of(AUDIENCE), Map.of(), issuedAt, expiresAt);
+        }
+
+        static String signedTokenWithoutAudience() {
+            return encode(KEY_PAIR, "test-user", ISSUER, null, Map.of(),
+                    Instant.now().minusSeconds(5), Instant.now().plusSeconds(3600));
+        }
+
+        static String signedTokenWithAudience(String audience) {
+            return encode(KEY_PAIR, "test-user", ISSUER, List.of(audience), Map.of(),
+                    Instant.now().minusSeconds(5), Instant.now().plusSeconds(3600));
+        }
+
+        static String signedTokenWithIssuer(String issuer) {
+            return encode(KEY_PAIR, "test-user", issuer, List.of(AUDIENCE), Map.of(),
+                    Instant.now().minusSeconds(5), Instant.now().plusSeconds(3600));
         }
 
         /**
@@ -174,33 +224,21 @@ class SecurityConfigTest {
          * {@link SecurityConfig} in addition to the identity guard.
          */
         static String signedTokenWithRealmRole(String realmRole) {
-            return encodeWithRealmRole(KEY_PAIR, realmRole,
+            return encode(KEY_PAIR, "test-user", ISSUER, List.of(AUDIENCE),
+                    Map.of("realm_access", Map.of("roles", List.of(realmRole))),
                     Instant.now().minusSeconds(5), Instant.now().plusSeconds(3600));
         }
 
         static String signedTokenWithSubject(String subject, Instant issuedAt, Instant expiresAt) {
-            return encodeWithSubject(KEY_PAIR, subject, issuedAt, expiresAt);
+            return encode(KEY_PAIR, subject, ISSUER, List.of(AUDIENCE), Map.of(), issuedAt, expiresAt);
         }
 
         static String signedTokenWithForeignKey(Instant issuedAt, Instant expiresAt) {
-            return encode(FOREIGN_KEY_PAIR, issuedAt, expiresAt);
+            return encode(FOREIGN_KEY_PAIR, "test-user", ISSUER, List.of(AUDIENCE), Map.of(), issuedAt, expiresAt);
         }
 
-        private static String encode(KeyPair keyPair, Instant issuedAt, Instant expiresAt) {
-            return encodeWithSubject(keyPair, "test-user", issuedAt, expiresAt);
-        }
-
-        private static String encodeWithRealmRole(KeyPair keyPair, String realmRole,
-                                                  Instant issuedAt, Instant expiresAt) {
-            return encode(keyPair, "test-user", Map.of(
-                    "realm_access", Map.of("roles", List.of(realmRole))), issuedAt, expiresAt);
-        }
-
-        private static String encodeWithSubject(KeyPair keyPair, String subject, Instant issuedAt, Instant expiresAt) {
-            return encode(keyPair, subject, Map.of(), issuedAt, expiresAt);
-        }
-
-        private static String encode(KeyPair keyPair, String subject, Map<String, Object> extraClaims,
+        private static String encode(KeyPair keyPair, String subject, String issuer, List<String> audiences,
+                                     Map<String, Object> extraClaims,
                                      Instant issuedAt, Instant expiresAt) {
             JWK jwk = new RSAKey.Builder((RSAPublicKey) keyPair.getPublic())
                     .privateKey((RSAPrivateKey) keyPair.getPrivate())
@@ -208,10 +246,13 @@ class SecurityConfigTest {
                     .build();
             NimbusJwtEncoder encoder = new NimbusJwtEncoder(new ImmutableJWKSet<>(new JWKSet(jwk)));
             JwtClaimsSet.Builder claims = JwtClaimsSet.builder()
-                    .issuer("https://keycloak.test/realms/s-digital")
+                    .issuer(issuer)
                     .subject(subject)
                     .issuedAt(issuedAt)
                     .expiresAt(expiresAt);
+            if (audiences != null) {
+                claims.audience(audiences);
+            }
             extraClaims.forEach(claims::claim);
             JwsHeader header = JwsHeader.with(SignatureAlgorithm.RS256).build();
             return encoder.encode(JwtEncoderParameters.from(header, claims.build())).getTokenValue();

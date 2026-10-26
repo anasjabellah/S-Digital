@@ -16,11 +16,13 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
 import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
 import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
+import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 import org.springframework.test.context.TestPropertySource;
@@ -212,12 +214,21 @@ class KeycloakRolesSecurityIntegrationTest {
     @TestConfiguration
     static class TestJwtConfiguration {
 
+        static final String ISSUER = "https://keycloak.test/realms/s-digital";
+        static final String AUDIENCE = "s-digital-api";
+
         private static final KeyPair KEY_PAIR = generateKeyPair();
         private static final KeyPair FOREIGN_KEY_PAIR = generateKeyPair();
 
         @Bean
         JwtDecoder jwtDecoder() {
-            return NimbusJwtDecoder.withPublicKey((RSAPublicKey) KEY_PAIR.getPublic()).build();
+            NimbusJwtDecoder decoder = NimbusJwtDecoder
+                    .withPublicKey((RSAPublicKey) KEY_PAIR.getPublic())
+                    .build();
+            decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
+                    JwtValidators.createDefaultWithIssuer(ISSUER),
+                    new KeycloakAudienceValidator(AUDIENCE)));
+            return decoder;
         }
 
         static String signedToken(Map<String, Object> extraClaims) {
@@ -240,8 +251,9 @@ class KeycloakRolesSecurityIntegrationTest {
                     .build();
             NimbusJwtEncoder encoder = new NimbusJwtEncoder(new ImmutableJWKSet<>(new JWKSet(jwk)));
             JwtClaimsSet.Builder claims = JwtClaimsSet.builder()
-                    .issuer("https://keycloak.test/realms/s-digital")
+                    .issuer(ISSUER)
                     .subject("test-user")
+                    .audience(List.of(AUDIENCE))
                     .issuedAt(issuedAt)
                     .expiresAt(expiresAt);
             extraClaims.forEach(claims::claim);

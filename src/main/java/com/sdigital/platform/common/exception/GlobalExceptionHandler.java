@@ -12,6 +12,8 @@ import com.sdigital.platform.user.exception.EmailAlreadyUsedException;
 import com.sdigital.platform.user.exception.UserAgencyNotFoundException;
 import com.sdigital.platform.user.exception.UserFunctionNotFoundException;
 import com.sdigital.platform.user.exception.UserNotFoundException;
+import com.sdigital.platform.user.exception.UserProvisioningException;
+import com.sdigital.platform.user.keycloak.exception.KeycloakIdentityAlreadyExistsException;
 import com.sdigital.platform.user.keycloak.exception.KeycloakIntegrationException;
 import com.sdigital.platform.user.keycloak.exception.KeycloakUnavailableException;
 import com.sdigital.platform.user.keycloak.exception.KeycloakUserNotFoundException;
@@ -21,6 +23,7 @@ import com.sdigital.platform.user.keycloak.exception.UserNotLinkedToKeycloakExce
 import com.sdigital.platform.notification.exception.NotificationNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.mapping.PropertyReferenceException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -34,6 +37,7 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 
 import java.net.URI;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Centralized translation of exceptions into RFC 7807 {@link ProblemDetail} responses.
@@ -54,6 +58,22 @@ public class GlobalExceptionHandler {
     private static final URI TYPE_UNPROCESSABLE = URI.create("https://s-digital.io/errors/unprocessable");
     private static final URI TYPE_FORBIDDEN = URI.create("https://s-digital.io/errors/forbidden");
     private static final URI TYPE_SERVICE_UNAVAILABLE = URI.create("https://s-digital.io/errors/service-unavailable");
+
+    /**
+     * Client-safe detail per known unique constraint, aligned with the deterministic
+     * duplicate-conflict messages returned by the business services.
+     */
+    private static final Map<String, String> UNIQUE_CONSTRAINT_DETAILS = Map.of(
+            "uk_app_user_email", "Email already in use",
+            "uk_app_user_keycloak_id", "User is already linked to a Keycloak account",
+            "uk_agency_code", "Agency code already in use",
+            "uk_function_code", "Function code already in use",
+            "uk_email_template_code", "Email template code already in use");
+
+    /**
+     * Used when the database reports a uniqueness violation without naming the constraint.
+     */
+    private static final String GENERIC_UNIQUE_DETAIL = "A value that must be unique is already in use";
 
     /**
      * Bean Validation failures on request bodies ({@code @Valid}).
@@ -131,9 +151,61 @@ public class GlobalExceptionHandler {
         return problem(HttpStatus.NOT_FOUND, TYPE_NOT_FOUND, "Not found", "Notification not found");
     }
 
+    /**
+     * Database integrity failure.
+     *
+     * <p>A uniqueness violation means the application-level duplicate check lost a
+     * check-then-act race: the request is a conflict (409), exactly like the deterministic
+     * duplicate rejection. The detail is chosen from the violated constraint and never
+     * echoes the SQL, the constraint definition or the conflicting value.</p>
+     *
+     * <p>Any other integrity failure (foreign key, not-null, check) is unexpected and stays
+     * a generic 500 so a real server-side problem is not disguised as a user conflict.</p>
+     */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ProblemDetail handleDataIntegrityViolation(DataIntegrityViolationException ex) {
+        if (DatabaseConstraints.isUniqueViolation(ex)) {
+            String constraintName = DatabaseConstraints.uniqueConstraintName(ex).orElse(null);
+            log.debug("Unique constraint violation rejected: constraint={}",
+                    constraintName == null ? "unknown" : constraintName);
+            String detail = constraintName == null
+                    ? GENERIC_UNIQUE_DETAIL
+                    : UNIQUE_CONSTRAINT_DETAILS.getOrDefault(constraintName, GENERIC_UNIQUE_DETAIL);
+            return problem(HttpStatus.CONFLICT, TYPE_CONFLICT, "Conflict", detail);
+        }
+
+        log.error("Unexpected data integrity violation", ex);
+        return problem(HttpStatus.INTERNAL_SERVER_ERROR, TYPE_INTERNAL,
+                "Internal server error", "An unexpected error occurred");
+    }
+
     @ExceptionHandler(EmailAlreadyUsedException.class)
     public ProblemDetail handleEmailAlreadyUsed(EmailAlreadyUsedException ex) {
         return problem(HttpStatus.CONFLICT, TYPE_CONFLICT, "Conflict", "Email already in use");
+    }
+
+    /**
+     * A remote Keycloak identity already owns the requested username/email. A business
+     * conflict, not an outage; the detail is generic and never echoes the email.
+     */
+    @ExceptionHandler(KeycloakIdentityAlreadyExistsException.class)
+    public ProblemDetail handleKeycloakIdentityAlreadyExists(KeycloakIdentityAlreadyExistsException ex) {
+        return problem(HttpStatus.CONFLICT, TYPE_CONFLICT, "Conflict",
+                "A Keycloak account already exists for this email");
+    }
+
+    /**
+     * Provisioning failed after the remote identity was created (local persistence/linking
+     * failure) or Keycloak returned an unusable id. Only the coarse reason and the cause
+     * class name are logged; no email, Keycloak id, token, secret or response body is
+     * exposed or written to the log.
+     */
+    @ExceptionHandler(UserProvisioningException.class)
+    public ProblemDetail handleUserProvisioning(UserProvisioningException ex) {
+        log.error("User provisioning failed: reason={} cause={}", ex.getReason(),
+                ex.getCause() == null ? null : ex.getCause().getClass().getSimpleName());
+        return problem(HttpStatus.INTERNAL_SERVER_ERROR, TYPE_INTERNAL,
+                "Internal server error", "An unexpected error occurred");
     }
 
     @ExceptionHandler(UserAgencyNotFoundException.class)
@@ -227,7 +299,7 @@ public class GlobalExceptionHandler {
     public ProblemDetail handleKeycloakUnavailable(KeycloakUnavailableException ex) {
         log.warn("Keycloak admin integration unavailable: {}", ex.getClass().getSimpleName());
         return problem(HttpStatus.SERVICE_UNAVAILABLE, TYPE_SERVICE_UNAVAILABLE,
-                "Service unavailable", "Role management is temporarily unavailable");
+                "Service unavailable", "Keycloak is temporarily unavailable");
     }
 
     /**

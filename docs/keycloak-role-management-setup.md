@@ -1,8 +1,10 @@
 # Keycloak Role Management — Backend Configuration (manual steps)
 
 This document lists the manual Keycloak and environment configuration required before the
-`/api/v1/users/{id}/roles` endpoints can work. The backend code performs **no** Keycloak
-provisioning: no client, role or account is created automatically.
+`/api/v1/users/{id}/roles` endpoints can work. This setup performs **no** Keycloak
+provisioning: no client, role or service account is created automatically. (User identities
+can be created later through the ADMIN-only `POST /api/v1/users/provision` endpoint, which
+does not bootstrap the configuration described here.)
 
 ## 1. Create a dedicated confidential client (service account)
 In the target realm (e.g. `s-digital`):
@@ -40,7 +42,9 @@ fail closed (403/503) and the read endpoint returns no manageable roles.
 - Realm roles only; client roles are never touched.
 - `ADMIN` cannot be assigned or removed through the API.
 - An administrator cannot modify their own roles (JWT `sub` == target `keycloakId`).
-- Users must already be linked (`app_user.keycloak_id`); no email lookup, no auto-provisioning.
+- Users must already be linked (`app_user.keycloak_id`); no email lookup, no JIT
+  auto-provisioning on first login. Linking is only possible through the ADMIN-only
+  `POST /api/v1/users/provision` endpoint (creation-time link) or out of band.
 - Disabled Keycloak accounts are refused (403).
 - Timeouts are explicit; mutations are never retried automatically.
 - Successful mutations are logged on the `SDIGITAL_AUDIT` logger (no tokens/secrets).

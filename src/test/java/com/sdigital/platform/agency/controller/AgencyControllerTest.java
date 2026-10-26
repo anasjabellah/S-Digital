@@ -11,12 +11,14 @@ import com.sdigital.platform.agency.exception.AgencyNotFoundException;
 import com.sdigital.platform.agency.service.AgencyService;
 import com.sdigital.platform.common.exception.GlobalExceptionHandler;
 import org.hamcrest.Matchers;
+import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -25,6 +27,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -118,6 +121,26 @@ class AgencyControllerTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.status").value(409))
                 .andExpect(jsonPath("$.detail").value("Agency code already in use"));
+    }
+
+    @Test
+    void createReturns409WhenTheDatabaseDetectsADuplicateCodeRace() throws Exception {
+        SQLException sqlException = new SQLException(
+                "duplicate key value violates unique constraint \"uk_agency_code\"", "23505");
+        when(agencyService.create(any(CreateAgencyRequest.class)))
+                .thenThrow(new DataIntegrityViolationException("could not execute statement",
+                        new ConstraintViolationException("could not execute statement", sqlException,
+                                "uk_agency_code")));
+        String body = objectMapper.writeValueAsString(new CreateAgencyRequest("AG-PARIS-01", "Agency Paris 01"));
+
+        mockMvc.perform(post("/api/v1/agencies")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.status").value(409))
+                .andExpect(jsonPath("$.detail").value("Agency code already in use"))
+                .andExpect(jsonPath("$.detail", Matchers.not(Matchers.containsString("uk_agency_code"))))
+                .andExpect(jsonPath("$.detail", Matchers.not(Matchers.containsString("SQL"))));
     }
 
     @Test

@@ -3,6 +3,7 @@ package com.sdigital.platform.user.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sdigital.platform.common.exception.GlobalExceptionHandler;
 import com.sdigital.platform.user.dto.CreateUserRequest;
+import com.sdigital.platform.user.dto.UpdateCurrentUserRequest;
 import com.sdigital.platform.user.dto.UpdateUserRequest;
 import com.sdigital.platform.user.dto.UserResponse;
 import com.sdigital.platform.user.entity.UserStatus;
@@ -153,6 +154,56 @@ class UserControllerTest {
 
         verify(userService).getById(id);
         verify(userService, org.mockito.Mockito.never()).getCurrentUser();
+    }
+
+    @Test
+    void updateCurrentUserReturns200WithUpdatedNames() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(userService.updateCurrentUser(any(UpdateCurrentUserRequest.class))).thenReturn(sample(id));
+        String body = objectMapper.writeValueAsString(new UpdateCurrentUserRequest("Alicia", "Smith"));
+
+        mockMvc.perform(put("/api/v1/users/me")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(id.toString()))
+                .andExpect(jsonPath("$.firstName").value("Bob"))
+                .andExpect(jsonPath("$.keycloakId").doesNotExist());
+
+        ArgumentCaptor<UpdateCurrentUserRequest> captor =
+                ArgumentCaptor.forClass(UpdateCurrentUserRequest.class);
+        verify(userService).updateCurrentUser(captor.capture());
+        assertThat(captor.getValue().firstName()).isEqualTo("Alicia");
+        assertThat(captor.getValue().lastName()).isEqualTo("Smith");
+    }
+
+    @Test
+    void updateCurrentUserReturns400WhenBodyInvalid() throws Exception {
+        String body = objectMapper.writeValueAsString(new UpdateCurrentUserRequest("", "   "));
+
+        mockMvc.perform(put("/api/v1/users/me")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.errors").isArray())
+                .andExpect(jsonPath("$.errors[*].field", Matchers.hasItems("firstName", "lastName")));
+    }
+
+    @Test
+    void meRouteIsNotCapturedByPutByIdRoute() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(userService.updateCurrentUser(any(UpdateCurrentUserRequest.class))).thenReturn(sample(id));
+        String body = objectMapper.writeValueAsString(new UpdateCurrentUserRequest("Alicia", "Smith"));
+
+        mockMvc.perform(put("/api/v1/users/me")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk());
+
+        verify(userService).updateCurrentUser(any(UpdateCurrentUserRequest.class));
+        verify(userService, org.mockito.Mockito.never())
+                .update(any(UUID.class), any(UpdateUserRequest.class));
     }
 
     @Test

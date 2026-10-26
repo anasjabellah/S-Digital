@@ -1,6 +1,7 @@
 package com.sdigital.platform.user.controller;
 
 import com.sdigital.platform.user.dto.CreateUserRequest;
+import com.sdigital.platform.user.dto.UpdateCurrentUserRequest;
 import com.sdigital.platform.user.dto.UpdateUserRequest;
 import com.sdigital.platform.user.dto.UserResponse;
 import com.sdigital.platform.user.entity.User;
@@ -112,6 +113,28 @@ public class UserController {
     @GetMapping("/me")
     public UserResponse getCurrentUser() {
         return userService.getCurrentUser();
+    }
+
+    @Operation(summary = "Update the current user's profile",
+            description = "Updates the authenticated caller's own profile. Only `firstName` and "
+                    + "`lastName` are self-editable; the email address, status, agency, function and "
+                    + "Keycloak link are never modified by this operation. The local identity is "
+                    + "resolved exclusively from the JWT `sub` claim.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Current user profile updated"),
+            @ApiResponse(responseCode = "400", description = "Invalid request body",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "401", description = "Missing or invalid bearer token",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "403", description = "Authenticated identity is not linked to an "
+                    + "ACTIVE local account",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "500", description = "Unexpected server error",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
+    })
+    @PutMapping("/me")
+    public UserResponse updateCurrentUser(@Valid @RequestBody UpdateCurrentUserRequest request) {
+        return userService.updateCurrentUser(request);
     }
 
     @Operation(summary = "Get a user by id", description = "Returns a single user by its UUID.")

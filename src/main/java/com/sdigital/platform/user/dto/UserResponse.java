@@ -9,8 +9,8 @@ import java.util.UUID;
 /**
  * Read model returned to clients.
  *
- * <p>{@code keycloakId} is deliberately not exposed at this stage (Keycloak is not
- * integrated yet).</p>
+ * <p>{@code keycloakId} is deliberately not exposed: the link is owned by the platform and is
+ * never needed by clients.</p>
  */
 @Schema(name = "UserResponse", description = "User representation returned by the API.")
 public record UserResponse(

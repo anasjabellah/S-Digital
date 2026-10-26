@@ -87,7 +87,7 @@ class KeycloakRoleAuditTransactionIntegrationTest {
         target.setKeycloakId(targetKeycloakId);
         targetUserId = userRepository.saveAndFlush(target).getId();
 
-        given(keycloakAdminClient.findUserId(targetKeycloakId)).willReturn(TARGET_KEYCLOAK_UUID);
+        given(keycloakAdminClient.findUserIdByInternalId(targetKeycloakId)).willReturn(TARGET_KEYCLOAK_UUID);
         given(keycloakAdminClient.isUserEnabled(TARGET_KEYCLOAK_UUID)).willReturn(true);
         given(keycloakAdminClient.addRealmRole(TARGET_KEYCLOAK_UUID, "MANAGER")).willReturn(true);
         given(keycloakAdminClient.removeRealmRole(TARGET_KEYCLOAK_UUID, "MANAGER")).willReturn(true);

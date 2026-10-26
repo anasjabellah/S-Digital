@@ -575,7 +575,11 @@ Exigences :
 
 1. **Rôles — source de vérité :** Keycloak (rôles de realm/client) ou base locale ? Synchronisation dans les deux sens ?
 2. **Modèle d'autorisation :** RBAC simple (rôles) ou RBAC + permissions fines ? Rôles figés ou dynamiques ?
-3. **Provisioning utilisateurs :** création locale puis liaison `keycloakId`, ou création d'abord dans Keycloak ? Qui possède le mot de passe ?
+3. **Provisioning utilisateurs — décidé :** `POST /api/v1/users/provision` (ADMIN) crée
+   d'abord l'identité Keycloak (activée, sans mot de passe, sans required action, sans rôle),
+   puis persiste la ligne locale et `keycloak_id` dans une transaction locale ; compensation
+   best effort en cas d'échec local. Le mot de passe reste possédé par Keycloak et est défini
+   hors bande. `POST /api/v1/users` reste strictement local (aucun appel Keycloak).
 4. **API `/me` :** confirmer le choix (self-service) et les champs modifiables ; suppression/`PATCH` partiel.
 5. **Pagination :** conserver `Page` Spring (contrat JSON actuel) ou introduire un `PaginatedResponse<T>` maison ? (impacte le contrat existant)
 6. **`sort` invalide :** corriger en 400 (ajout d'un handler) ou laisser en 500 ? (change le comportement actuel)

@@ -1,6 +1,7 @@
 package com.sdigital.platform.notification.controller;
 
 import com.sdigital.platform.common.security.CurrentActorResolver;
+import com.sdigital.platform.notification.dto.CreateNotificationRequest;
 import com.sdigital.platform.notification.dto.NotificationResponse;
 import com.sdigital.platform.notification.service.NotificationService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -12,6 +13,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -26,10 +28,13 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.util.UriComponentsBuilder;
 
+import java.net.URI;
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
@@ -96,6 +101,27 @@ public class NotificationController {
         validateSort(pageable);
         UUID userId = currentUserId();
         return notificationService.getNotifications(userId, pageable);
+    }
+
+    @Operation(summary = "Consulter une notification",
+            description = "Retourne une notification si elle appartient à l'utilisateur authentifié. "
+                    + "Retourne 404 si elle n'existe pas ou appartient à un autre utilisateur.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Notification trouvée"),
+            @ApiResponse(responseCode = "400", description = "Identifiant malformé",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "401", description = "Jeton manquant ou invalide",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "403", description = "Identité non liée ou inactive",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "404", description = "Notification introuvable ou non accessible",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
+    })
+    @GetMapping("/{id}")
+    public NotificationResponse getById(
+            @Parameter(description = "Identifiant de la notification", example = "3fa85f64-5717-4562-b3fc-2c963f66afa6")
+            @PathVariable UUID id) {
+        return notificationService.getNotification(id, currentUserId());
     }
 
     @Operation(summary = "Lister les notifications non lues",
@@ -176,5 +202,30 @@ public class NotificationController {
         UUID userId = currentUserId();
         int count = notificationService.markAllAsRead(userId);
         return ResponseEntity.ok(count);
+    }
+
+    @Operation(summary = "Émettre une notification",
+            description = "Crée une notification non lue pour un utilisateur local existant. "
+                    + "Opération réservée aux ADMIN. Le destinataire devient propriétaire de la "
+                    + "notification ; l'émission est journalisée dans l'audit.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "201", description = "Notification créée"),
+            @ApiResponse(responseCode = "400", description = "Corps de requête invalide",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "401", description = "Jeton manquant ou invalide",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "403", description = "Rôle ADMIN requis ou identité non liée/inactive",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "404", description = "Destinataire introuvable",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
+    })
+    @PostMapping
+    public ResponseEntity<NotificationResponse> create(
+            @Valid @RequestBody CreateNotificationRequest request,
+            UriComponentsBuilder uriBuilder) {
+        UUID actorId = currentUserId();
+        NotificationResponse created = notificationService.createForRecipient(request, actorId);
+        URI location = uriBuilder.path("/api/v1/notifications/{id}").buildAndExpand(created.id()).toUri();
+        return ResponseEntity.created(location).body(created);
     }
 }

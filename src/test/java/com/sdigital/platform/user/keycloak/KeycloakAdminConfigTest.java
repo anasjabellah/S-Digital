@@ -52,7 +52,7 @@ class KeycloakAdminConfigTest {
                     new KeycloakAdminConfig().keycloakAdminClient(properties, RestClient.builder());
 
             long start = System.nanoTime();
-            assertThatThrownBy(() -> client.findUserId("sub-slow"))
+            assertThatThrownBy(() -> client.findUserIdByInternalId("sub-slow"))
                     .isInstanceOf(RuntimeException.class);
             long elapsedMillis = (System.nanoTime() - start) / 1_000_000;
 

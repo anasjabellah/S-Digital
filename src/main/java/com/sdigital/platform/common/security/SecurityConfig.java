@@ -84,15 +84,19 @@ public class SecurityConfig {
                         // These rules are evaluated by the AuthorizationFilter, which runs *after*
                         // LocalUserActiveGuardFilter, so a missing or INACTIVE local identity is
                         // always refused first, even for an ADMIN token.
-                        // Current-user profile ("/me"): any authenticated caller may read their
-                        // own profile. Declared before the "/users/{id}" rule so the literal
-                        // route is never captured by the ADMIN/MANAGER-only id matcher. The
-                        // linked + ACTIVE local identity requirement is still enforced by
+                        // Current-user profile ("/me"): any authenticated caller may read and
+                        // update their own profile. Declared before the "/users/{id}" rules so
+                        // the literal route is never captured by the ADMIN-only update matcher.
+                        // The linked + ACTIVE local identity requirement is still enforced by
                         // LocalUserActiveGuardFilter.
                         .requestMatchers(HttpMethod.GET, "/api/v1/users/me").authenticated()
+                        .requestMatchers(HttpMethod.PUT, "/api/v1/users/me").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/v1/users", "/api/v1/users/{id}")
                                 .hasAnyRole("ADMIN", "MANAGER")
                         .requestMatchers(HttpMethod.POST, "/api/v1/users").hasRole("ADMIN")
+                        // Provisioning creates a remote Keycloak identity in addition to the
+                        // local user: same ADMIN-only policy as the local creation endpoint.
+                        .requestMatchers(HttpMethod.POST, "/api/v1/users/provision").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.PUT, "/api/v1/users/{id}").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.DELETE, "/api/v1/users/{id}").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.POST, "/api/v1/users/{id}/activate").hasRole("ADMIN")
@@ -123,6 +127,13 @@ public class SecurityConfig {
                         // MANAGER, whose read access covers the business data only.
                         .requestMatchers(HttpMethod.GET, "/api/v1/audit-logs")
                                 .hasRole("ADMIN")
+                        // Notifications: reading and marking as read only concerns the
+                        // authenticated user's own notifications (ownership is enforced by the
+                        // service, cross-user access answers 404). Emitting a notification to a
+                        // local user is an administrative action. The literal POST rule does not
+                        // match the user-owned "/{id}/read" or "/read/all" mutations, which keep
+                        // the default authenticated rule.
+                        .requestMatchers(HttpMethod.POST, "/api/v1/notifications").hasRole("ADMIN")
                         // Reports: full exports of domain data, ADMIN only.
                         .requestMatchers(HttpMethod.GET, "/api/v1/reports")
                                 .hasRole("ADMIN")

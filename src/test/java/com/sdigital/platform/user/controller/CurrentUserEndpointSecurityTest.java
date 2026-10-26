@@ -5,9 +5,11 @@ import com.nimbusds.jose.jwk.JWKSet;
 import com.nimbusds.jose.jwk.RSAKey;
 import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
 import com.sdigital.platform.common.exception.GlobalExceptionHandler;
+import com.sdigital.platform.common.security.KeycloakAudienceValidator;
 import com.sdigital.platform.common.security.KeycloakJwtAuthenticationConverterConfig;
 import com.sdigital.platform.common.security.SecurityConfig;
 import com.sdigital.platform.common.security.SecurityErrorResponseWriter;
+import com.sdigital.platform.user.dto.UpdateCurrentUserRequest;
 import com.sdigital.platform.user.dto.UserResponse;
 import com.sdigital.platform.user.entity.UserStatus;
 import com.sdigital.platform.user.service.UserIdentityService;
@@ -20,11 +22,13 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
 import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
 import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
+import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 import org.springframework.test.context.TestPropertySource;
@@ -42,9 +46,11 @@ import java.util.UUID;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -156,6 +162,75 @@ class CurrentUserEndpointSecurityTest {
                 .andExpect(status().isForbidden());
     }
 
+    @Test
+    void updateCurrentUserReturns200ForLinkedActiveIdentityWithoutRoleRestriction() throws Exception {
+        when(userIdentityService.isCurrentUserActiveLinked()).thenReturn(true);
+        when(userService.updateCurrentUser(any(UpdateCurrentUserRequest.class))).thenReturn(sample());
+        String token = TestJwtConfiguration.signedToken("test-user", Map.of());
+
+        mockMvc.perform(put("/api/v1/users/me")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"firstName\":\"Alicia\",\"lastName\":\"Smith\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.email").value("alice@example.com"))
+                .andExpect(jsonPath("$.keycloakId").doesNotExist());
+    }
+
+    @Test
+    void updateCurrentUserReturns400WhenBodyInvalid() throws Exception {
+        when(userIdentityService.isCurrentUserActiveLinked()).thenReturn(true);
+        String token = TestJwtConfiguration.signedToken("test-user", Map.of());
+
+        mockMvc.perform(put("/api/v1/users/me")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"firstName\":\"\",\"lastName\":\"\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400));
+    }
+
+    @Test
+    void updateCurrentUserReturns401WithoutToken() throws Exception {
+        mockMvc.perform(put("/api/v1/users/me")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"firstName\":\"Alicia\",\"lastName\":\"Smith\"}"))
+                .andExpect(status().isUnauthorized());
+
+        verifyNoInteractions(userService);
+    }
+
+    @Test
+    void updateCurrentUserReturns403WhenIdentityIsNotLinked() throws Exception {
+        when(userIdentityService.isCurrentUserActiveLinked()).thenReturn(false);
+        String token = TestJwtConfiguration.signedToken("test-user", Map.of());
+
+        mockMvc.perform(put("/api/v1/users/me")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"firstName\":\"Alicia\",\"lastName\":\"Smith\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.status").value(403))
+                .andExpect(jsonPath("$.detail").value(SecurityErrorResponseWriter.DETAIL));
+
+        verifyNoInteractions(userService);
+    }
+
+    @Test
+    void updateByIdStillRequiresAdminRole() throws Exception {
+        when(userIdentityService.isCurrentUserActiveLinked()).thenReturn(true);
+        UUID id = UUID.randomUUID();
+        String token = TestJwtConfiguration.signedToken("test-user", Map.of());
+
+        mockMvc.perform(put("/api/v1/users/{id}", id)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"alice@example.com\",\"firstName\":\"Alice\",\"lastName\":\"Doe\"}"))
+                .andExpect(status().isForbidden());
+
+        verifyNoInteractions(userService);
+    }
+
     /**
      * Signs real RS256 tokens with a freshly generated key pair and exposes a matching decoder,
      * so the real resource-server validation runs without Keycloak.
@@ -163,11 +238,20 @@ class CurrentUserEndpointSecurityTest {
     @TestConfiguration
     static class TestJwtConfiguration {
 
+        static final String ISSUER = "https://keycloak.test/realms/s-digital";
+        static final String AUDIENCE = "s-digital-api";
+
         private static final KeyPair KEY_PAIR = generateKeyPair();
 
         @Bean
         JwtDecoder jwtDecoder() {
-            return NimbusJwtDecoder.withPublicKey((RSAPublicKey) KEY_PAIR.getPublic()).build();
+            NimbusJwtDecoder decoder = NimbusJwtDecoder
+                    .withPublicKey((RSAPublicKey) KEY_PAIR.getPublic())
+                    .build();
+            decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
+                    JwtValidators.createDefaultWithIssuer(ISSUER),
+                    new KeycloakAudienceValidator(AUDIENCE)));
+            return decoder;
         }
 
         static String signedToken(String subject, Map<String, Object> extraClaims) {
@@ -182,8 +266,9 @@ class CurrentUserEndpointSecurityTest {
                     .build();
             NimbusJwtEncoder encoder = new NimbusJwtEncoder(new ImmutableJWKSet<>(new JWKSet(jwk)));
             JwtClaimsSet.Builder claims = JwtClaimsSet.builder()
-                    .issuer("https://keycloak.test/realms/s-digital")
+                    .issuer(ISSUER)
                     .subject(subject)
+                    .audience(List.of(AUDIENCE))
                     .issuedAt(issuedAt)
                     .expiresAt(expiresAt);
             extraClaims.forEach(claims::claim);

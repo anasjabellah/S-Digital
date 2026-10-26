@@ -297,7 +297,8 @@ public class KeycloakRoleAdminService {
         }
         String trimmed = keycloakId.trim();
 
-        String keycloakUserId = guardedKeycloakCall(() -> keycloakAdminClient.findUserId(trimmed));
+        String keycloakUserId = guardedKeycloakCall(
+                () -> keycloakAdminClient.findUserIdByInternalId(trimmed));
         if (keycloakUserId == null) {
             throw new KeycloakUserNotFoundException();
         }

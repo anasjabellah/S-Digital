@@ -10,15 +10,16 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Configuration for the Keycloak Admin integration used to manage users' realm roles.
+ * Configuration for the Keycloak Admin integration used to provision users and manage their
+ * realm roles.
  *
  * <p>Every value, including the client secret, is supplied through environment
  * variables (see {@code application.yml}); nothing is hard-coded and no secret is
  * ever committed to Git.</p>
  *
  * <p>When required values are missing the configuration is considered
- * <em>not configured</em>: the role-management endpoints then fail closed instead of
- * attempting a partial or insecure call. This is checked explicitly by
+ * <em>not configured</em>: the provisioning and role-management endpoints then fail closed
+ * instead of attempting a partial or insecure call. This is checked explicitly by
  * {@link #isConfigured()} rather than by letting a null leak into the HTTP client.</p>
  */
 @ConfigurationProperties(prefix = "sdigital.keycloak.admin")

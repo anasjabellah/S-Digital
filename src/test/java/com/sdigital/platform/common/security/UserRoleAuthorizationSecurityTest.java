@@ -3,6 +3,7 @@ package com.sdigital.platform.common.security;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sdigital.platform.common.exception.GlobalExceptionHandler;
 import com.sdigital.platform.user.controller.UserController;
+import com.sdigital.platform.user.controller.UserProvisioningController;
 import com.sdigital.platform.user.dto.CreateUserRequest;
 import com.sdigital.platform.user.dto.UpdateUserRequest;
 import com.sdigital.platform.user.dto.UserResponse;
@@ -10,6 +11,7 @@ import com.sdigital.platform.user.entity.User;
 import com.sdigital.platform.user.entity.UserStatus;
 import com.sdigital.platform.user.repository.UserRepository;
 import com.sdigital.platform.user.service.UserIdentityService;
+import com.sdigital.platform.user.service.UserProvisioningService;
 import com.sdigital.platform.user.service.UserService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -66,7 +68,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * compensates for a missing or INACTIVE local identity, and neither client roles nor OAuth2
  * scopes satisfy a business role.</p>
  */
-@WebMvcTest(controllers = UserController.class)
+@WebMvcTest(controllers = {UserController.class, UserProvisioningController.class})
 @Import({SecurityConfig.class, KeycloakJwtAuthenticationConverterConfig.class,
         GlobalExceptionHandler.class, UserIdentityService.class,
         KeycloakRolesSecurityIntegrationTest.TestJwtConfiguration.class})
@@ -88,6 +90,9 @@ class UserRoleAuthorizationSecurityTest {
 
     @MockitoBean
     private UserService userService;
+
+    @MockitoBean
+    private UserProvisioningService userProvisioningService;
 
     @MockitoBean
     private UserRepository userRepository;
@@ -131,6 +136,22 @@ class UserRoleAuthorizationSecurityTest {
                         .header(HttpHeaders.AUTHORIZATION, bearer("ADMIN")))
                 .andExpect(status().isCreated())
                 .andExpect(header().string("Location", endsWith("/api/v1/users/" + USER_ID)));
+    }
+
+    @Test
+    void adminCanProvisionUser() throws Exception {
+        when(userProvisioningService.provision(any(CreateUserRequest.class))).thenReturn(sampleResponse());
+        String body = objectMapper.writeValueAsString(
+                new CreateUserRequest("bob@example.com", "Bob", "Marley", null, null));
+
+        mockMvc.perform(post("/api/v1/users/provision")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body)
+                        .header(HttpHeaders.AUTHORIZATION, bearer("ADMIN")))
+                .andExpect(status().isCreated())
+                .andExpect(header().string("Location", endsWith("/api/v1/users/" + USER_ID)));
+
+        verify(userProvisioningService).provision(any(CreateUserRequest.class));
     }
 
     @Test
@@ -197,8 +218,13 @@ class UserRoleAuthorizationSecurityTest {
                 .header(HttpHeaders.AUTHORIZATION, bearer("MANAGER"))));
         expectForbiddenJson(mockMvc.perform(post("/api/v1/users/" + USER_ID + "/activate")
                 .header(HttpHeaders.AUTHORIZATION, bearer("MANAGER"))));
+        expectForbiddenJson(mockMvc.perform(post("/api/v1/users/provision")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body)
+                .header(HttpHeaders.AUTHORIZATION, bearer("MANAGER"))));
 
         verifyNoInteractions(userService);
+        verifyNoInteractions(userProvisioningService);
     }
 
     // --- USER: no user-management access at all ------------------------------------------------
@@ -230,8 +256,13 @@ class UserRoleAuthorizationSecurityTest {
                 .header(HttpHeaders.AUTHORIZATION, bearer("USER"))));
         expectForbiddenJson(mockMvc.perform(post("/api/v1/users/" + USER_ID + "/activate")
                 .header(HttpHeaders.AUTHORIZATION, bearer("USER"))));
+        expectForbiddenJson(mockMvc.perform(post("/api/v1/users/provision")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body)
+                .header(HttpHeaders.AUTHORIZATION, bearer("USER"))));
 
         verifyNoInteractions(userService);
+        verifyNoInteractions(userProvisioningService);
     }
 
     // --- No implicit access from scopes or client roles ----------------------------------------
@@ -285,6 +316,38 @@ class UserRoleAuthorizationSecurityTest {
         verifyNoInteractions(userService);
     }
 
+    @Test
+    void adminTokenWithoutLinkedLocalUserCannotProvision() throws Exception {
+        lenient().when(userRepository.findByKeycloakId(KEYCLOAK_SUB)).thenReturn(Optional.empty());
+        String body = objectMapper.writeValueAsString(
+                new CreateUserRequest("bob@example.com", "Bob", "Marley", null, null));
+
+        expectForbiddenJson(mockMvc.perform(post("/api/v1/users/provision")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body)
+                        .header(HttpHeaders.AUTHORIZATION, bearer("ADMIN"))))
+                .andExpect(content().string(not(containsString(KEYCLOAK_SUB))));
+
+        verifyNoInteractions(userProvisioningService);
+    }
+
+    @Test
+    void adminTokenWithInactiveLocalUserCannotProvision() throws Exception {
+        User inactive = new User("ada.lovelace@example.com", "Ada", "Lovelace");
+        inactive.setKeycloakId(KEYCLOAK_SUB);
+        inactive.setStatus(UserStatus.INACTIVE);
+        lenient().when(userRepository.findByKeycloakId(KEYCLOAK_SUB)).thenReturn(Optional.of(inactive));
+        String body = objectMapper.writeValueAsString(
+                new CreateUserRequest("bob@example.com", "Bob", "Marley", null, null));
+
+        expectForbiddenJson(mockMvc.perform(post("/api/v1/users/provision")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body)
+                        .header(HttpHeaders.AUTHORIZATION, bearer("ADMIN"))));
+
+        verifyNoInteractions(userProvisioningService);
+    }
+
     /**
      * A role denial (guard passed, role missing) and an identity denial (ADMIN role present,
      * identity unlinked) must be indistinguishable apart from being 403: same media type and
@@ -326,6 +389,19 @@ class UserRoleAuthorizationSecurityTest {
         mockMvc.perform(get("/api/v1/users")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + expiredToken()))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void missingJwtCannotProvision() throws Exception {
+        String body = objectMapper.writeValueAsString(
+                new CreateUserRequest("bob@example.com", "Bob", "Marley", null, null));
+
+        mockMvc.perform(post("/api/v1/users/provision")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isUnauthorized());
+
+        verifyNoInteractions(userProvisioningService);
     }
 
     // --- Helpers -------------------------------------------------------------------------------

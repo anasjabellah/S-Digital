@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.security.oauth2.jwt.JwtValidators;
@@ -21,9 +22,15 @@ import org.springframework.util.StringUtils;
  * set is only fetched when the first token is validated. In addition to the signature and
  * the temporal claims ({@code exp}/{@code nbf}), the issuer claim is validated.</p>
  *
+ * <p>The intended API audience is supplied through {@code KEYCLOAK_AUDIENCE} (bound to
+ * {@code sdigital.security.keycloak.audience}). A token must carry that value in its
+ * {@code aud} claim: a missing or different audience is rejected, so a token issued for
+ * another client of the same realm cannot be used against this API.</p>
+ *
  * <p>When {@code KEYCLOAK_ISSUER_URI} is not set, a fail-closed decoder is provided: the
  * API still starts but rejects every bearer token (business endpoints answer {@code 401}).
- * This keeps local development and the test suite independent of a running Keycloak while
+ * The same fail-closed behaviour applies when {@code KEYCLOAK_AUDIENCE} is blank. This
+ * keeps local development and the test suite independent of a running Keycloak while
  * never exposing business endpoints anonymously.</p>
  */
 @Configuration
@@ -37,7 +44,8 @@ public class KeycloakJwtDecoderConfig {
     private static final String KEYCLOAK_JWK_SET_PATH = "/protocol/openid-connect/certs";
 
     @Bean
-    public JwtDecoder jwtDecoder(@Value("${sdigital.security.keycloak.issuer-uri:}") String issuerUri) {
+    public JwtDecoder jwtDecoder(@Value("${sdigital.security.keycloak.issuer-uri:}") String issuerUri,
+                                 @Value("${sdigital.security.keycloak.audience:}") String audience) {
         if (!StringUtils.hasText(issuerUri)) {
             log.warn("KEYCLOAK_ISSUER_URI is not set: the API will start but reject every bearer token "
                     + "(business endpoints answer 401). Set KEYCLOAK_ISSUER_URI to the Keycloak realm "
@@ -46,14 +54,25 @@ public class KeycloakJwtDecoderConfig {
                 throw new JwtException("KEYCLOAK_ISSUER_URI is not configured; the token cannot be validated.");
             };
         }
+        if (!StringUtils.hasText(audience)) {
+            log.warn("KEYCLOAK_AUDIENCE is not set: the API will start but reject every bearer token "
+                    + "(business endpoints answer 401). Set KEYCLOAK_AUDIENCE to the audience of the "
+                    + "S-Digital API (for example s-digital-api).");
+            return rejectedToken -> {
+                throw new JwtException("KEYCLOAK_AUDIENCE is not configured; the token cannot be validated.");
+            };
+        }
 
         String issuer = trimTrailingSlashes(issuerUri);
         String jwkSetUri = issuer + KEYCLOAK_JWK_SET_PATH;
 
         NimbusJwtDecoder decoder = NimbusJwtDecoder.withJwkSetUri(jwkSetUri).build();
-        decoder.setJwtValidator(JwtValidators.createDefaultWithIssuer(issuer));
-        log.info("Keycloak JWT validation enabled for issuer '{}' (JWKS resolved lazily from '{}').",
-                issuer, jwkSetUri);
+        decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
+                JwtValidators.createDefaultWithIssuer(issuer),
+                new KeycloakAudienceValidator(audience)));
+        log.info("Keycloak JWT validation enabled for issuer '{}' and audience '{}' "
+                        + "(JWKS resolved lazily from '{}').",
+                issuer, audience.trim(), jwkSetUri);
         return decoder;
     }
 
