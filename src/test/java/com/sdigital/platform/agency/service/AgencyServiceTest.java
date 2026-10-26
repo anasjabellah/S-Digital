@@ -10,6 +10,9 @@ import com.sdigital.platform.agency.exception.AgencyCodeAlreadyUsedException;
 import com.sdigital.platform.agency.exception.AgencyNotFoundException;
 import com.sdigital.platform.agency.mapper.AgencyMapper;
 import com.sdigital.platform.agency.repository.AgencyRepository;
+import com.sdigital.platform.audit.entity.AuditOutcome;
+import com.sdigital.platform.audit.service.AuditLogService;
+import com.sdigital.platform.common.security.CurrentActorResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -23,12 +26,14 @@ import org.springframework.data.jpa.domain.Specification;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -41,14 +46,22 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class AgencyServiceTest {
 
+    private static final UUID ACTOR_ID = UUID.fromString("22222222-2222-2222-2222-222222222222");
+
     @Mock
     private AgencyRepository agencyRepository;
+
+    @Mock
+    private AuditLogService auditLogService;
+
+    @Mock
+    private CurrentActorResolver currentActorResolver;
 
     private AgencyService agencyService;
 
     @BeforeEach
     void setUp() {
-        agencyService = new AgencyService(agencyRepository, new AgencyMapper());
+        agencyService = new AgencyService(agencyRepository, new AgencyMapper(), auditLogService, currentActorResolver);
     }
 
     @Test
@@ -264,12 +277,152 @@ class AgencyServiceTest {
     @Test
     void getAllCombinesSearchAndStatus() {
         Pageable pageable = PageRequest.of(0, 10);
-        when(agencyRepository.findAll(any(Specification.class), any(Pageable.class)))
+        when(agencyRepository.findAll(any(Specification.class), eq(pageable)))
                 .thenReturn(new PageImpl<>(List.of(), pageable, 0));
 
         agencyService.getAll("  paris ", AgencyStatus.ACTIVE, pageable);
 
         verify(agencyRepository).findAll(any(Specification.class), eq(pageable));
         verify(agencyRepository, never()).findAll(pageable);
+    }
+
+    // --- persistent audit ----------------------------------------------------------------------
+
+    @Test
+    void createAuditsAgencyCreated() {
+        UUID agencyId = UUID.randomUUID();
+        when(agencyRepository.existsByCode("AG-PARIS-01")).thenReturn(false);
+        when(agencyRepository.save(any(Agency.class))).thenAnswer(invocation -> {
+            Agency saved = invocation.getArgument(0);
+            AgencyTestData.setId(saved, agencyId);
+            return saved;
+        });
+        when(currentActorResolver.resolveCurrentActorUserId()).thenReturn(ACTOR_ID);
+
+        agencyService.create(new CreateAgencyRequest("AG-PARIS-01", "Agency Paris 01"));
+
+        verify(auditLogService).record(eq(ACTOR_ID), eq("AGENCY_CREATED"), eq("AGENCY"),
+                eq(agencyId.toString()), eq(AuditOutcome.SUCCESS), anyMap());
+    }
+
+    @Test
+    void updateAuditsAgencyUpdated() {
+        UUID agencyId = UUID.randomUUID();
+        when(agencyRepository.findById(agencyId)).thenReturn(Optional.of(
+                AgencyTestData.agency(agencyId, "AG-PARIS-01", "Agency Paris 01", Instant.now(), Instant.now())));
+        when(agencyRepository.existsByCodeAndIdNot("AG-PARIS-02", agencyId)).thenReturn(false);
+        when(agencyRepository.save(any(Agency.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(currentActorResolver.resolveCurrentActorUserId()).thenReturn(ACTOR_ID);
+
+        agencyService.update(agencyId, new UpdateAgencyRequest("AG-PARIS-02", "Agency Paris 02"));
+
+        verify(auditLogService).record(eq(ACTOR_ID), eq("AGENCY_UPDATED"), eq("AGENCY"),
+                eq(agencyId.toString()), eq(AuditOutcome.SUCCESS),
+                eq(Map.of("fields", List.of("code", "name"))));
+    }
+
+    @Test
+    void updateAuditsOnlyTheFieldsThatReallyChanged() {
+        UUID agencyId = UUID.randomUUID();
+        when(agencyRepository.findById(agencyId)).thenReturn(Optional.of(
+                AgencyTestData.agency(agencyId, "AG-PARIS-01", "Agency Paris 01", Instant.now(), Instant.now())));
+        when(agencyRepository.existsByCodeAndIdNot("AG-PARIS-01", agencyId)).thenReturn(false);
+        when(agencyRepository.save(any(Agency.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        agencyService.update(agencyId, new UpdateAgencyRequest("AG-PARIS-01", "Agency Paris Centre"));
+
+        verify(auditLogService).record(any(), eq("AGENCY_UPDATED"), eq("AGENCY"),
+                eq(agencyId.toString()), eq(AuditOutcome.SUCCESS),
+                eq(Map.of("fields", List.of("name"))));
+    }
+
+    @Test
+    void updateThatChangesNothingWritesNoAuditEvent() {
+        UUID agencyId = UUID.randomUUID();
+        when(agencyRepository.findById(agencyId)).thenReturn(Optional.of(
+                AgencyTestData.agency(agencyId, "AG-PARIS-01", "Agency Paris 01", Instant.now(), Instant.now())));
+        when(agencyRepository.existsByCodeAndIdNot("AG-PARIS-01", agencyId)).thenReturn(false);
+        when(agencyRepository.save(any(Agency.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        agencyService.update(agencyId, new UpdateAgencyRequest("AG-PARIS-01", "Agency Paris 01"));
+
+        verify(auditLogService, never()).record(any(), any(), any(), any(), any(), anyMap());
+    }
+
+    @Test
+    void deactivateAuditsAgencyDeactivatedWithStatusTransition() {
+        UUID agencyId = UUID.randomUUID();
+        when(agencyRepository.findById(agencyId)).thenReturn(Optional.of(
+                AgencyTestData.agency(agencyId, "AG-PARIS-01", "Agency Paris 01", Instant.now(), Instant.now())));
+        when(agencyRepository.save(any(Agency.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(currentActorResolver.resolveCurrentActorUserId()).thenReturn(ACTOR_ID);
+
+        agencyService.deactivate(agencyId);
+
+        verify(auditLogService).record(eq(ACTOR_ID), eq("AGENCY_DEACTIVATED"), eq("AGENCY"),
+                eq(agencyId.toString()), eq(AuditOutcome.SUCCESS),
+                eq(Map.of("previousStatus", "ACTIVE", "status", "INACTIVE")));
+    }
+
+    @Test
+    void deactivateOnAlreadyInactiveAgencyWritesNoAuditEvent() {
+        UUID agencyId = UUID.randomUUID();
+        Agency agency = AgencyTestData.agency(agencyId, "AG-PARIS-01", "Agency Paris 01", Instant.now(), Instant.now());
+        agency.setStatus(AgencyStatus.INACTIVE);
+        when(agencyRepository.findById(agencyId)).thenReturn(Optional.of(agency));
+
+        agencyService.deactivate(agencyId);
+
+        verify(auditLogService, never()).record(any(), any(), any(), any(), any(), anyMap());
+        verify(agencyRepository, never()).save(any(Agency.class));
+    }
+
+    @Test
+    void activateAuditsAgencyActivatedWithStatusTransition() {
+        UUID agencyId = UUID.randomUUID();
+        Agency agency = AgencyTestData.agency(agencyId, "AG-PARIS-01", "Agency Paris 01", Instant.now(), Instant.now());
+        agency.setStatus(AgencyStatus.INACTIVE);
+        when(agencyRepository.findById(agencyId)).thenReturn(Optional.of(agency));
+        when(agencyRepository.save(any(Agency.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(currentActorResolver.resolveCurrentActorUserId()).thenReturn(null);
+
+        agencyService.activate(agencyId);
+
+        // the actor could not be resolved: the event is still written, without an actor
+        verify(auditLogService).record(eq(null), eq("AGENCY_ACTIVATED"), eq("AGENCY"),
+                eq(agencyId.toString()), eq(AuditOutcome.SUCCESS),
+                eq(Map.of("previousStatus", "INACTIVE", "status", "ACTIVE")));
+    }
+
+    @Test
+    void activateOnAlreadyActiveAgencyWritesNoAuditEvent() {
+        UUID agencyId = UUID.randomUUID();
+        when(agencyRepository.findById(agencyId)).thenReturn(Optional.of(
+                AgencyTestData.agency(agencyId, "AG-PARIS-01", "Agency Paris 01", Instant.now(), Instant.now())));
+
+        agencyService.activate(agencyId);
+
+        verify(auditLogService, never()).record(any(), any(), any(), any(), any(), anyMap());
+        verify(agencyRepository, never()).save(any(Agency.class));
+    }
+
+    @Test
+    void failedMutationWritesNoAuditEvent() {
+        when(agencyRepository.existsByCode("AG-PARIS-01")).thenReturn(true);
+
+        assertThatThrownBy(() -> agencyService.create(new CreateAgencyRequest("AG-PARIS-01", "Agency Paris 01")))
+                .isInstanceOf(AgencyCodeAlreadyUsedException.class);
+
+        verify(auditLogService, never()).record(any(), any(), any(), any(), any(), anyMap());
+    }
+
+    @Test
+    void readOperationsWriteNoAuditEvent() {
+        Pageable pageable = PageRequest.of(0, 10);
+        when(agencyRepository.findAll(pageable)).thenReturn(new PageImpl<>(List.of(), pageable, 0));
+
+        agencyService.getAll(pageable);
+
+        verify(auditLogService, never()).record(any(), any(), any(), any(), any(), anyMap());
     }
 }

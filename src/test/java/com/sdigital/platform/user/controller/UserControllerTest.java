@@ -130,6 +130,32 @@ class UserControllerTest {
     }
 
     @Test
+    void getCurrentUserReturns200WithOwnProfileAndNoKeycloakId() throws Exception {
+        when(userService.getCurrentUser()).thenReturn(sample(UUID.randomUUID()));
+
+        mockMvc.perform(get("/api/v1/users/me"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.email").value("bob@example.com"))
+                .andExpect(jsonPath("$.firstName").value("Bob"))
+                .andExpect(jsonPath("$.keycloakId").doesNotExist());
+
+        verify(userService).getCurrentUser();
+    }
+
+    @Test
+    void meRouteIsNotCapturedByGetByIdRoute() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(userService.getById(id)).thenReturn(sample(id));
+
+        mockMvc.perform(get("/api/v1/users/{id}", id))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(id.toString()));
+
+        verify(userService).getById(id);
+        verify(userService, org.mockito.Mockito.never()).getCurrentUser();
+    }
+
+    @Test
     void getByIdReturns404WhenUnknown() throws Exception {
         UUID id = UUID.randomUUID();
         when(userService.getById(id)).thenThrow(new UserNotFoundException(id));

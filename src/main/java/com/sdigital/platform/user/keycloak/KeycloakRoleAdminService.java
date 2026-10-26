@@ -1,5 +1,7 @@
 package com.sdigital.platform.user.keycloak;
 
+import com.sdigital.platform.audit.entity.AuditOutcome;
+import com.sdigital.platform.audit.service.AuditLogService;
 import com.sdigital.platform.common.security.KeycloakIdentityResolver;
 import com.sdigital.platform.user.dto.UserRoleDto;
 import com.sdigital.platform.user.dto.UserRolesResponse;
@@ -20,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -43,6 +46,17 @@ import java.util.UUID;
  * <p>These rules are expected to be revisited once the business decisions are
  * confirmed; they are centralized in {@link #ensureRoleIsManageable(String)} and the
  * allowlist/configuration guards so a later change stays local.</p>
+ *
+ * <h2>Transaction boundaries</h2>
+ * <p>The role <em>mutations</em> run in a read-write transaction because they persist an
+ * audit entry: a read-only transaction would set the JDBC connection to read-only (PostgreSQL
+ * then rejects the INSERT) and switch Hibernate to {@code FlushMode.MANUAL}, which would
+ * silently skip the audit flush. The read operations keep their read-only transaction.</p>
+ *
+ * <p>The Keycloak call is external to PostgreSQL: the database transaction does not (and
+ * cannot) make the role change atomic with the audit row. The audit entry is therefore
+ * written after the Keycloak result is confirmed, and a failure between the successful
+ * Keycloak mutation and the audit commit leaves the two out of sync (documented risk).</p>
  */
 @Service
 public class KeycloakRoleAdminService {
@@ -55,6 +69,12 @@ public class KeycloakRoleAdminService {
     static final String ACTION_ASSIGN = "ASSIGN";
     static final String ACTION_REMOVE = "REMOVE";
 
+    // Persistent audit conventions (see AuditLogService). Kept distinct from the coarse
+    // ACTION_* codes used by the operational SDIGITAL_AUDIT logger.
+    static final String AUDIT_ENTITY_TYPE = "USER_ROLE";
+    static final String AUDIT_ACTION_ASSIGN = "ROLE_ASSIGN";
+    static final String AUDIT_ACTION_REMOVE = "ROLE_REMOVE";
+
     static final String REASON_SELF_MODIFICATION = "SELF_MODIFICATION_DENIED";
     static final String REASON_RESERVED_ROLE = "RESERVED_ROLE_DENIED";
     static final String REASON_NOT_ALLOWLISTED = "NOT_ALLOWLISTED";
@@ -66,15 +86,18 @@ public class KeycloakRoleAdminService {
     private final KeycloakAdminClient keycloakAdminClient;
     private final KeycloakAdminProperties properties;
     private final RoleChangeAuditLogger auditLogger;
+    private final AuditLogService auditLogService;
 
     public KeycloakRoleAdminService(UserRepository userRepository,
                                     KeycloakAdminClient keycloakAdminClient,
                                     KeycloakAdminProperties properties,
-                                    RoleChangeAuditLogger auditLogger) {
+                                    RoleChangeAuditLogger auditLogger,
+                                    AuditLogService auditLogService) {
         this.userRepository = userRepository;
         this.keycloakAdminClient = keycloakAdminClient;
         this.properties = properties;
         this.auditLogger = auditLogger;
+        this.auditLogService = auditLogService;
     }
 
     /**
@@ -98,11 +121,19 @@ public class KeycloakRoleAdminService {
 
     /**
      * Assigns a single realm role to the target user after applying every security rule.
+     *
+     * <p>The user's current roles are read before the mutation so the audit outcome can
+     * distinguish an effective assignment ({@code SUCCESS}) from an idempotent no-op
+     * ({@code NO_CHANGE}). The audit entry is persisted <em>after</em> the Keycloak
+     * mutation has been confirmed: a PostgreSQL transaction never covers the external
+     * Keycloak operation.</p>
      */
-    @Transactional(readOnly = true)
+    @Transactional
     public UserRolesResponse assignRole(UUID targetUserId, String roleName) {
         String normalizedRole = normalizeRole(roleName);
         MutationContext context = prepareMutation(targetUserId, normalizedRole, ACTION_ASSIGN);
+
+        boolean alreadyPresent = currentRoles(context.target().keycloakUserId()).contains(normalizedRole);
 
         boolean roleExists = guardedKeycloakCall(
                 () -> keycloakAdminClient.addRealmRole(context.target().keycloakUserId(), normalizedRole));
@@ -110,18 +141,26 @@ public class KeycloakRoleAdminService {
             throw new RoleNotAllowedException("Unknown role");
         }
 
+        AuditOutcome outcome = alreadyPresent ? AuditOutcome.NO_CHANGE : AuditOutcome.SUCCESS;
         auditLogger.roleChanged(context.actorUserId(), context.actorKeycloakId(),
                 context.target().localUserId(), context.target().keycloakId(), normalizedRole, ACTION_ASSIGN);
+        persistRoleChange(context, normalizedRole, AUDIT_ACTION_ASSIGN, outcome);
         return getRoles(targetUserId);
     }
 
     /**
      * Removes a single realm role from the target user after applying every security rule.
+     *
+     * <p>As for {@link #assignRole(UUID, String)}, the current roles are read before the
+     * mutation to distinguish an effective removal ({@code SUCCESS}) from a no-op
+     * ({@code NO_CHANGE}).</p>
      */
-    @Transactional(readOnly = true)
+    @Transactional
     public UserRolesResponse removeRole(UUID targetUserId, String roleName) {
         String normalizedRole = normalizeRole(roleName);
         MutationContext context = prepareMutation(targetUserId, normalizedRole, ACTION_REMOVE);
+
+        boolean alreadyPresent = currentRoles(context.target().keycloakUserId()).contains(normalizedRole);
 
         boolean roleExists = guardedKeycloakCall(
                 () -> keycloakAdminClient.removeRealmRole(context.target().keycloakUserId(), normalizedRole));
@@ -129,9 +168,30 @@ public class KeycloakRoleAdminService {
             throw new RoleNotAllowedException("Unknown role");
         }
 
+        AuditOutcome outcome = alreadyPresent ? AuditOutcome.SUCCESS : AuditOutcome.NO_CHANGE;
         auditLogger.roleChanged(context.actorUserId(), context.actorKeycloakId(),
                 context.target().localUserId(), context.target().keycloakId(), normalizedRole, ACTION_REMOVE);
+        persistRoleChange(context, normalizedRole, AUDIT_ACTION_REMOVE, outcome);
         return getRoles(targetUserId);
+    }
+
+    private List<String> currentRoles(String keycloakUserId) {
+        return guardedKeycloakCall(() -> keycloakAdminClient.listRealmRoles(keycloakUserId));
+    }
+
+    /**
+     * Persists a single audit entry for a confirmed role change. The {@code details} map is
+     * deliberately minimal: only the role name and a coarse {@code changed} flag. No token,
+     * secret, Keycloak response body or personal data is ever included.
+     */
+    private void persistRoleChange(MutationContext context, String roleName, String action, AuditOutcome outcome) {
+        auditLogService.record(
+                context.actorUserId(),
+                action,
+                AUDIT_ENTITY_TYPE,
+                context.target().localUserId().toString(),
+                outcome,
+                Map.of("role", roleName, "changed", outcome == AuditOutcome.SUCCESS));
     }
 
     // --- rule enforcement ----------------------------------------------------------------------
@@ -186,14 +246,27 @@ public class KeycloakRoleAdminService {
      * Records a single structured denial on the audit logger and returns the supplied
      * exception so the caller can {@code throw} it. Kept in one place so a refusal is
      * audited exactly once, with no secret, token or raw Keycloak payload.
+     *
+     * <p>The persistent denial entry is written in an independent transaction: the refusal
+     * ends with an exception that rolls back the caller's transaction, so a denial recorded
+     * in that transaction would be discarded.</p>
      */
     private RuntimeException deny(ActorContext actor,
-                                  UUID targetUserId,
-                                  String roleName,
-                                  String action,
-                                  String reasonCode,
-                                  RuntimeException toThrow) {
+                                   UUID targetUserId,
+                                   String roleName,
+                                   String action,
+                                   String reasonCode,
+                                   RuntimeException toThrow) {
         auditLogger.roleChangeDenied(actor.localUserId(), targetUserId, roleName, action, reasonCode);
+        String persistentAction = ACTION_ASSIGN.equals(action) ? AUDIT_ACTION_ASSIGN : AUDIT_ACTION_REMOVE;
+        String entityId = targetUserId != null ? targetUserId.toString() : null;
+        auditLogService.recordIndependent(
+                actor.localUserId(),
+                persistentAction,
+                AUDIT_ENTITY_TYPE,
+                entityId,
+                AuditOutcome.DENIED,
+                Map.of("role", roleName, "reason", reasonCode));
         return toThrow;
     }
 

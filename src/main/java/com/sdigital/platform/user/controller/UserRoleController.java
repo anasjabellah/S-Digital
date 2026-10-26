@@ -35,7 +35,7 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/api/v1/users/{id}/roles")
-@Tag(name = "User roles", description = "Consult and manage a user's Keycloak realm roles (ADMIN only).")
+@Tag(name = "Utilisateurs", description = "Gestion des utilisateurs de la plateforme et de leurs rôles realm Keycloak.")
 public class UserRoleController {
 
     private static final String ID_EXAMPLE = "3fa85f64-5717-4562-b3fc-2c963f66afa6";

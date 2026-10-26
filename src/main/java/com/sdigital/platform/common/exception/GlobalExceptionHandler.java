@@ -2,6 +2,10 @@ package com.sdigital.platform.common.exception;
 
 import com.sdigital.platform.agency.exception.AgencyCodeAlreadyUsedException;
 import com.sdigital.platform.agency.exception.AgencyNotFoundException;
+import com.sdigital.platform.audit.exception.InvalidAuditLogRangeException;
+import com.sdigital.platform.email.exception.EmailTemplateCodeAlreadyUsedException;
+import com.sdigital.platform.email.exception.EmailTemplateNotFoundException;
+import com.sdigital.platform.email.exception.InvalidEmailTemplateException;
 import com.sdigital.platform.function.exception.FunctionCodeAlreadyUsedException;
 import com.sdigital.platform.function.exception.FunctionNotFoundException;
 import com.sdigital.platform.user.exception.EmailAlreadyUsedException;
@@ -14,6 +18,7 @@ import com.sdigital.platform.user.keycloak.exception.KeycloakUserNotFoundExcepti
 import com.sdigital.platform.user.keycloak.exception.RoleChangeDeniedException;
 import com.sdigital.platform.user.keycloak.exception.RoleNotAllowedException;
 import com.sdigital.platform.user.keycloak.exception.UserNotLinkedToKeycloakException;
+import com.sdigital.platform.notification.exception.NotificationNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.mapping.PropertyReferenceException;
@@ -105,9 +110,25 @@ public class GlobalExceptionHandler {
                 "Bad request", "Invalid request parameter");
     }
 
+    /**
+     * Inconsistent time range requested on the audit listing (for example
+     * {@code from} strictly after {@code to}). The detail stays generic and client-safe.
+     */
+    @ExceptionHandler(InvalidAuditLogRangeException.class)
+    public ProblemDetail handleInvalidAuditLogRange(InvalidAuditLogRangeException ex) {
+        log.debug("Request argument rejected: {}", ex.getMessage());
+        return problem(HttpStatus.BAD_REQUEST, TYPE_VALIDATION,
+                "Validation failed", "Invalid date range: 'from' must not be after 'to'");
+    }
+
     @ExceptionHandler(UserNotFoundException.class)
     public ProblemDetail handleUserNotFound(UserNotFoundException ex) {
         return problem(HttpStatus.NOT_FOUND, TYPE_NOT_FOUND, "Not found", "User not found");
+    }
+
+    @ExceptionHandler(NotificationNotFoundException.class)
+    public ProblemDetail handleNotificationNotFound(NotificationNotFoundException ex) {
+        return problem(HttpStatus.NOT_FOUND, TYPE_NOT_FOUND, "Not found", "Notification not found");
     }
 
     @ExceptionHandler(EmailAlreadyUsedException.class)
@@ -143,6 +164,23 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(FunctionCodeAlreadyUsedException.class)
     public ProblemDetail handleFunctionCodeAlreadyUsed(FunctionCodeAlreadyUsedException ex) {
         return problem(HttpStatus.CONFLICT, TYPE_CONFLICT, "Conflict", "Function code already in use");
+    }
+
+    @ExceptionHandler(EmailTemplateNotFoundException.class)
+    public ProblemDetail handleEmailTemplateNotFound(EmailTemplateNotFoundException ex) {
+        return problem(HttpStatus.NOT_FOUND, TYPE_NOT_FOUND, "Not found", "Email template not found");
+    }
+
+    @ExceptionHandler(EmailTemplateCodeAlreadyUsedException.class)
+    public ProblemDetail handleEmailTemplateCodeAlreadyUsed(EmailTemplateCodeAlreadyUsedException ex) {
+        return problem(HttpStatus.CONFLICT, TYPE_CONFLICT, "Conflict", "Email template code already in use");
+    }
+
+    @ExceptionHandler(InvalidEmailTemplateException.class)
+    public ProblemDetail handleInvalidEmailTemplate(InvalidEmailTemplateException ex) {
+        log.debug("Email template rejected: {}", ex.getMessage());
+        return problem(HttpStatus.BAD_REQUEST, TYPE_VALIDATION,
+                "Validation failed", "Invalid email template placeholders");
     }
 
     /**

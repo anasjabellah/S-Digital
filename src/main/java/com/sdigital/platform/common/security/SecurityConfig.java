@@ -84,6 +84,12 @@ public class SecurityConfig {
                         // These rules are evaluated by the AuthorizationFilter, which runs *after*
                         // LocalUserActiveGuardFilter, so a missing or INACTIVE local identity is
                         // always refused first, even for an ADMIN token.
+                        // Current-user profile ("/me"): any authenticated caller may read their
+                        // own profile. Declared before the "/users/{id}" rule so the literal
+                        // route is never captured by the ADMIN/MANAGER-only id matcher. The
+                        // linked + ACTIVE local identity requirement is still enforced by
+                        // LocalUserActiveGuardFilter.
+                        .requestMatchers(HttpMethod.GET, "/api/v1/users/me").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/v1/users", "/api/v1/users/{id}")
                                 .hasAnyRole("ADMIN", "MANAGER")
                         .requestMatchers(HttpMethod.POST, "/api/v1/users").hasRole("ADMIN")
@@ -108,6 +114,23 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.PUT, "/api/v1/functions/{id}").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.DELETE, "/api/v1/functions/{id}").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.POST, "/api/v1/functions/{id}/activate").hasRole("ADMIN")
+                        // Dashboard: read-only global statistics, shared by ADMIN and MANAGER
+                        // like the other read endpoints (USER is refused).
+                        .requestMatchers(HttpMethod.GET, "/api/v1/dashboard/summary")
+                                .hasAnyRole("ADMIN", "MANAGER")
+                        // Audit trail: ADMIN only. The trail exposes the history of every
+                        // privileged action of the platform, so it is not shared with
+                        // MANAGER, whose read access covers the business data only.
+                        .requestMatchers(HttpMethod.GET, "/api/v1/audit-logs")
+                                .hasRole("ADMIN")
+                        // Reports: full exports of domain data, ADMIN only.
+                        .requestMatchers(HttpMethod.GET, "/api/v1/reports")
+                                .hasRole("ADMIN")
+                        // Email templates: ADMIN only for both reads and writes. Templates
+                        // define outbound message content and are an administration concern.
+                        .requestMatchers("/api/v1/email-templates", "/api/v1/email-templates/{id}",
+                                        "/api/v1/email-templates/{id}/**")
+                                .hasRole("ADMIN")
                         // Any other business route still requires a valid JWT (and, through the
                         // guard above, a linked + ACTIVE local identity) until its own RBAC rule
                         // is defined for a route that actually exists.

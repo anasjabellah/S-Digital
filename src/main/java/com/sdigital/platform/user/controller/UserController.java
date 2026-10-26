@@ -49,7 +49,7 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/api/v1/users")
-@Tag(name = "Users", description = "Create, read, update and deactivate platform users.")
+@Tag(name = "Utilisateurs", description = "Gestion des utilisateurs de la plateforme (création, consultation, mise à jour, activation/désactivation).")
 public class UserController {
 
     private static final String ID_EXAMPLE = "3fa85f64-5717-4562-b3fc-2c963f66afa6";
@@ -93,6 +93,25 @@ public class UserController {
         UserResponse created = userService.create(request);
         URI location = uriBuilder.path("/api/v1/users/{id}").buildAndExpand(created.id()).toUri();
         return ResponseEntity.created(location).body(created);
+    }
+
+    @Operation(summary = "Get the current user's profile",
+            description = "Returns the local profile of the authenticated caller, resolved "
+                    + "exclusively from the JWT `sub` claim. The local identity and `keycloakId` "
+                    + "are never exposed. Requires a linked and ACTIVE local account.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Current user profile returned"),
+            @ApiResponse(responseCode = "401", description = "Missing or invalid bearer token",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "403", description = "Authenticated identity is not linked to an "
+                    + "ACTIVE local account",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "500", description = "Unexpected server error",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
+    })
+    @GetMapping("/me")
+    public UserResponse getCurrentUser() {
+        return userService.getCurrentUser();
     }
 
     @Operation(summary = "Get a user by id", description = "Returns a single user by its UUID.")

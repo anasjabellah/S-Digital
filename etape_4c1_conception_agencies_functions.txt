@@ -1,0 +1,236 @@
+ÉTAPE 4C.1 — CONCEPTION DU MODULE AGENCIES & FUNCTIONS (lecture seule)
+Date : 2026-10-19
+Portée : proposition technique uniquement. Aucune entité, migration, config, base ou
+Keycloak modifié ; aucun fichier existant modifié ; aucun commit. Seul ce rapport est créé.
+Base de preuves : User.java, UserStatus.java, dto/*, UserMapper, UserRepository,
+UserSpecifications, UserService, UserController, V1__create_user.sql, SecurityConfig,
+GlobalExceptionHandler, rbac-audit.md, backend-architecture.md, suite 146 tests verts.
+
+================================================================================
+1. ÉTAT EXISTANT (référence commune)
+- Module user seul : entité User (UUID, email unique 320, keycloak_id unique nullable,
+  first/last name, status ACTIVE|INACTIVE, timestamps JPA), CRUD + activate + filtres
+  search/status, tri validé (whitelist, 400), erreurs ProblemDetail RFC 7807.
+- Flyway : V1 uniquement ; ddl-auto=validate ; migrations additives uniquement.
+- RBAC centralisé dans SecurityConfig (pas de @PreAuthorize) : ADMIN/MANAGER lecture,
+  ADMIN écriture ; garde "lié+actif" ; 403 JSON strict partagé.
+- Conventions : records DTO, mapper manuel, pas de Lombok/MapStruct, code anglais,
+  tests à 4 niveaux (service/repository PG réel/MVC/sécurité), OpenAPI annoté.
+- Le module user N'a ni champ agency ni fonction : le modèle est à créer de zéro.
+
+================================================================================
+2. MODÈLE DE DONNÉES PROPOSÉ
+
+2.1 Table `agency`
+| Champ        | Type             | Règles |
+|--------------|------------------|--------|
+| id           | UUID             | PK (généré app, GenerationType.UUID) |
+| code         | VARCHAR(50)      | NOT NULL, UNIQUE — clé logique stable ex. "AG-PARIS-01" |
+| name         | VARCHAR(150)     | NOT NULL — libellé affiché |
+| status       | VARCHAR(20)      | NOT NULL, DEFAULT 'ACTIVE' (réutilise le pattern UserStatus : ACTIVE/INACTIVE) |
+| created_at   | TIMESTAMPTZ      | NOT NULL |
+| updated_at   | TIMESTAMPTZ      | NOT NULL |
+Contraintes : pk_agency, uk_agency_code. Index sur (status) pour les listes filtrées.
+Pas de supression physique via l'API (désactivation logique, comme user).
+
+2.2 Table `function`
+| Champ        | Type             | Règles |
+|--------------|------------------|--------|
+| id           | UUID             | PK |
+| code         | VARCHAR(50)      | NOT NULL, UNIQUE — ex. "F-INGE", "F-COMPTA" |
+| name         | VARCHAR(150)     | NOT NULL |
+| status       | VARCHAR(20)      | NOT NULL, DEFAULT 'ACTIVE' |
+| created_at   | TIMESTAMPTZ      | NOT NULL |
+| updated_at   | TIMESTAMPTZ      | NOT NULL |
+Mêmes contraintes/index que agency (pk/uk/index nommés de façon homologue).
+
+2.3 Structure des affectations — DÉPEND DES DÉCISIONS D2/Q1/Q2 (voir §8)
+Option A (cardinalité 1..1 / N..1, cf. §3) :
+| Table            | Colonnes |
+|------------------|----------|
+| user_agency      | user_id UUID NOT NULL FK→app_user(id) ON DELETE RESTRICT, agency_id UUID NOT NULL FK→agency(id) ON DELETE RESTRICT, assigned_at TIMESTAMPTZ NOT NULL, PK (user_id, agency_id) si N..1 ; PK (user_id) si 1..1 |
+| user_function    | user_id UUID NOT NULL FK→app_user(id), function_id UUID NOT NULL FK→function(id), assigned_at TIMESTAMPTZ NOT NULL, PK (user_id, function_id) ou (user_id) |
+- ON DELETE RESTRICT : une affectation ne peut pas disparaître silencieusement ;
+  suppression = désactivation de l'agence/fonction ou réaffectation explicite.
+- Les FK référencent une entité INACTIVE encore existante : l'inactivité interdit la
+  NOUVELLE affectation, pas l'historique (décision Q4).
+- Si 1..1 : contraintes UNIQUE(user_id) sur chaque table de jointure (une seule ligne
+  par utilisateur) — la clé logique devient "un user = une agence, une fonction".
+- Si N..1 côté agence : plusieurs lignes par user, PK composite ; option "principale"
+  (boolean primary) seulement si Zahra le demande (Q3).
+
+2.4 Entités JPA (futur module `com.sdigital.platform.agency` et `.function`)
+- Agency.java, Function.java : miroir de User (uuid, prePersist/preUpdate timestamps,
+  status enum réutilisable via un enum partagé ou dupliqué proprement dans chaque module).
+- Pour 1..1 : @OneToOne avec @JoinColumn sur user — OU @ManyToOne côté User
+  (voir §6 impact sur User). Choix technique recommandé pour 1..1 : colonne
+  agency_id/function_id NULLABLE directement sur app_user (voir §6, option "colonnes").
+- Pour N..1 : entité UserAgency/UserFunction avec Repository dédié.
+
+================================================================================
+3. OPTIONS DE CARDINALITÉ (à valider — pas de choix arbitraire ici)
+
+3.1 User ↔ Agency
+- Option 1 (1 agence par utilisateur) : une colonne nullable agency_id sur app_user
+  (ou table user_agency avec PK=user_id). Lecture simple (@ManyToOne), formulaire =
+  un seul select. Suffisant si l'organisation est "un salarié = une agence".
+- Option 2 (N agences par utilisateur) : table user_agency PK (user_id, agency_id).
+  Formulaire = multi-sélect ; listes filtrées plus riches ; échanges plus verbeux.
+- Recommandation technique neutre : modéliser en table de jointure dans les deux cas
+  (cohérence, historique assigned_at, migration évolutive 1→N sans migration cassante),
+  à moins qu'El Mehdi ne tranche explicitement pour la simplicité (colonnes FK).
+
+3.2 User ↔ Function
+- Option 1 (1 fonction principale) : idem 1..1.
+- Option 2 (N fonctions) : table user_function.
+- Remarque : même question que l'agence mais indépendante (on peut être 1 agence /
+  N fonctions). Ne pas présumer d'une réponse symétrique.
+
+3.3 Matrice des conséquences (pour El Mehdi)
+| | 1..1 | N..1 |
+|---|---|---|
+| Migration | +2 colonnes FK OU 2 tables à PK user_id | 2 tables jointures |
+| Formulaire user | 1 select par relation | multi-select |
+| Endpoint affectation | PUT remplace | POST/DELETE gèrent la collection |
+| Filtrage "utilisateurs de l'agence X" | WHERE agency_id = ? | JOIN table |
+| Évolution future | migration additive simple (nouvelle table) | déjà prêt |
+
+================================================================================
+4. ENDPOINTS REST PROPOSÉS (conventions /api/v1, ProblemDetail, pagination/search
+identiques au module user : page, size<=100, sort whitelisté, search, status)
+
+4.1 Agences (`/api/v1/agencies`)
+| Méthode | Chemin | Description | Rôle |
+|---|---|---|---|
+| GET    | /api/v1/agencies               | Liste paginée + filters search/status | ADMIN, MANAGER |
+| GET    | /api/v1/agencies/{id}          | Détail | ADMIN, MANAGER |
+| POST   | /api/v1/agencies               | Création (201 + Location) | ADMIN |
+| PUT    | /api/v1/agencies/{id}          | Mise à jour (code?, name) | ADMIN |
+| POST   | /api/v1/agencies/{id}/activate | Réactivation (200 + body) | ADMIN |
+| DELETE | /api/v1/agencies/{id}          | Désactivation logique (204) | ADMIN |
+4.2 Fonctions (`/api/v1/functions`) : mêmes 6 opérations, mêmes rôles.
+4.3 Affectations (forme dépendante du choix §3 ; proposition neutre) :
+| Méthode | Chemin | Description | Rôle |
+|---|---|---|---|
+| GET    | /api/v1/users/{id}/agencies    | Agences de l'utilisateur | ADMIN, MANAGER |
+| PUT    | /api/v1/users/{id}/agencies    | Remplace la/des agence(s) (body : liste d'UUID) | ADMIN |
+| GET    | /api/v1/users/{id}/functions   | Fonctions de l'utilisateur | ADMIN, MANAGER |
+| PUT    | /api/v1/users/{id}/functions   | Remplace la/des fonction(s) | ADMIN |
+Alternative acceptée : exposer agencyId/functionId dans CreateUser/UpdateUserRequest
+si 1..1 (plus simple pour le formulaire). Décision D2b.
+- Aucune route n'existe aujourd'hui ; la doc OpenAPI ne documentera que le réel.
+- `search` agency/function : LIKE partiel insensible à la casse sur code+name
+  (réutiliser le pattern UserSpecifications).
+
+================================================================================
+5. VALIDATIONS MÉTIER, ERREURS HTTP, RBAC
+
+5.1 Validations (Bean Validation + service)
+- code : @NotBlank, @Size(max=50), normalisé trim+uppercase (comme email l'est en
+  lowercase) ; unicité → 409 (exception AgencyCodeAlreadyUsedException / Function...).
+- name : @NotBlank, @Size(max=150).
+- status : jamais dans les payloads create/update (pattern user).
+- Affectation : agencyId/functionId doivent exister (404) et être ACTIVE
+  (409 "Agency is inactive" — empêche d'affecter à une entité désactivée).
+- Remplacement d'affectation : body = liste d'UUID sans doublon ; chaque UUID validé.
+
+5.2 Erreurs HTTP (toutes en ProblemDetail, types https://s-digital.io/errors/*)
+| Cas | Statut | Detail |
+|---|---|---|
+| Corps invalide / UUID malformé | 400 | Validation failed / Invalid value for parameter |
+| Entité absente | 404 | Agency not found / Function not found |
+| code déjà utilisé | 409 | Agency code already in use |
+| Affectation à entité INACTIVE | 409 | Agency is inactive |
+| Tri/filtre invalide | 400 | Invalid sort property / Invalid request parameter |
+| Non autorisé (rôle) | 403 | Access denied (JSON strict 3B.6) |
+| Sans JWT | 401 | corps vide |
+| FK RESTRICT violée en suppression physique (jamais exposé) | 500 interne | — |
+
+5.3 RBAC (dans SecurityConfig, mêmes conventions que /api/v1/users)
+- GET agencies/functions/{id}/lists : hasAnyRole("ADMIN","MANAGER")
+- POST/PUT/DELETE/activate : hasRole("ADMIN")
+- Affectations (GET/PUT /users/{id}/agencies|functions) : GET = ADMIN+MANAGER,
+  PUT = ADMIN (aligné sur "POST/PUT/DELETE users = ADMIN").
+- Le garde lié+actif s'applique déjà à /api/v1/** : aucun ajout requis.
+- Tests de refus MANAGER/USER + 403 JSON strict, comme UserRoleAuthorizationSecurityTest.
+
+================================================================================
+6. MIGRATIONS FLYWAY ET IMPACT SUR USER / FORMULAIRE
+
+6.1 Migrations (additives, jamais destructive ; ddl-auto validate doit rester satisfait)
+- V2__create_agency.sql : CREATE TABLE agency + contraintes + index.
+- V3__create_function.sql : idem.
+- V4__create_user_agency.sql / V5__create_function_link.sql (si jointures) :
+  tables de liaison + FK RESTRICT + PK composites + index sur (agency_id),
+  (function_id) pour les inverses de lecture.
+- Option alternative 1..1 : V2 ajoute 2 colonnes agency_id/function_id NULLABLE à
+  app_user + 2 FK + 2 index. Plus simple, mais évolution 1→N = migration vers table.
+- Seeds idempotents (R__ ou INSERT ... ON CONFLICT DO NOTHING) seulement si El Mehdi
+  fournit la liste initiale des agences/fonctions (D2/Q1).
+
+6.2 Impact sur User
+- Entité User : si colonnes FK — 2 champs @ManyToOne nullables + getters ; si jointures
+  — rien côté User (requêtes via repository dédié), sauf besoins de listing.
+- UserResponse : enrichissement possible (agencySummary : {id, code, name}) — c'est
+  une extension non cassante (ajout de champs) mais à valider (D2d) car le contrat
+  frontend évolue.
+- CreateUserRequest/UpdateUserRequest : champs optionnels agencyId/functionId
+  (nullable = pas d'affectation à la création) si 1..1 inline (D2b).
+- Filtres GET /users : paramètres facultatifs agencyId / functionId (combinables avec
+  search/status existants) — extension naturelle de UserSpecifications.
+- Le module user reste maître de sa table ; le module agency ne écrit jamais dans
+  app_user sans passer par UserService (convention d'interfaces inter-modules).
+
+================================================================================
+7. STRATÉGIE DE TESTS (miroir des 4 niveaux existants)
+- Service (mock repo + mapper réel) : unicité code, normalisation, statut transitions,
+  affectation refusée si INACTIVE/inexistante, remplacement complet, 404.
+- Repository (Testcontainers PG16 + Flyway) : contraintes uk/pk/FK RESTRICT, specs
+  search/status, jointures de listing ("users d'une agency"), pagination+tri whitelists.
+- MVC (WebMvcTest + service mocké + GlobalExceptionHandler) : 201+Location, 200,
+  204, 400 (validation), 404, 409 (code dupliqué), 400 sort invalide (whitelist),
+  absence de fuite de champs internes.
+- Sécurité (vrai filtre + JWT signés test) : matrice ADMIN/MANAGER/USER sur les 6+6+4
+  routes, 403 JSON strict identique garde/rôle, 401 sans token, garde INACTIVE.
+- Non-régression : les 146 tests existants doivent rester verts ; aucune route user
+  ne change de comportement sans test dédié.
+- Estimation tests : ~40-55 nouveaux tests.
+
+================================================================================
+8. DÉCISIONS À FAIRE TRANCHER
+À Zahra (métier) :
+ Q1. Une agence possède-t-elle un code imposé (format, casse) et une hiérarchie ?
+ Q2. Un utilisateur appartient-il à une agence unique ou plusieurs ? Une fonction
+     unique ou plusieurs ? (cardinalités §3)
+ Q3. Faut-il une notion de fonction "principale" ou de date de début/fin d'affectation ?
+ Q4. Peut-on affecter un utilisateur à une agence/fonction INACTIVE (rétroactif) ?
+ Q5. Que voient les MANAGER : toutes les agences ou seulement leurs agences ?
+ Q6. Liste initiale des agences et fonctions (seed) ?
+ Q7. Doit-on pouvoir filtrer la liste des utilisateurs par agence/fonction (attendu) ?
+À El Mehdi (technique/produit) :
+ D1. Stockage 1..1 : colonnes FK sur app_user vs tables de jointure (§3.3).
+ D2. Enrichir UserResponse avec l'agence/fonction et exposer agencyId/functionId dans
+     les payloads user ? (impact frontend)
+ D3. Valider la matrice RBAC §5.3 (lecture ADMIN+MANAGER, écriture ADMIN).
+ D4. Valider le périmètre d'itération 1 (voir §9, lot 1) vs report des affectations.
+ D5. Format du code agence/fonction (unicité, normalisation).
+
+================================================================================
+9. PLAN D'IMPLÉMENTATION PAR PETITES ÉTAPES + ESTIMATION
+Lot 0 — Décisions D1/D2/Q1-Q7 (0.5 j, atelier El Mehdi + Zahra).
+Lot 1 — Reference data minimal (agences + fonctions seules) :
+  V2+V3, entités/repo/service/controller/DTO/mapper, RBAC, tests 4 niveaux.
+  Estimation : 3-4 j. (Aucune dépendance au choix de cardinalité.)
+Lot 2 — Affectations user (selon D1) :
+  migrations liaison ou colonnes, endpoints /users/{id}/agencies|functions,
+  filtres agencyId/functionId sur /users, extension UserResponse (si D2), tests.
+  Estimation : 2-3 j (1..1) ou 3-4 j (N..1).
+Lot 3 — Finitions : seed idempotent (si liste fournie), docs (rbac-audit refresh),
+  OpenAPI vérifié sur Swagger, ADR court "agencies-functions".
+  Estimation : 0.5-1 j.
+Total indicatif : 6-9 j (lot 0 inclus), hors aléas de décisions métier.
+
+================================================================================
+10. CONFIRMATION
+Analyse et rapport uniquement. Aucun fichier applicatif modifié, aucune migration
+créée, aucune entité, aucun changement Keycloak/config/DB, git inchangé, aucun commit.

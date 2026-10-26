@@ -9,6 +9,7 @@ import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.media.StringSchema;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
+import io.swagger.v3.oas.models.tags.Tag;
 import org.springdoc.core.customizers.OpenApiCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -66,6 +67,42 @@ public class OpenApiConfig {
     @Bean
     public OpenApiCustomizer paginationSchemaCustomizer() {
         return this::cleanUpSchemas;
+    }
+
+    /**
+     * Orders the generated tags so Swagger UI displays the business modules in the same
+     * order as the frontend navigation: Tableau de bord, Utilisateurs, Référentiels,
+     * Journal d'audit. springdoc otherwise sorts tags alphabetically, which would not
+     * match the target module order. Modules without any implemented operation
+     * (Rapports, Notifications) are not rendered as empty tags.
+     */
+    @Bean
+    public OpenApiCustomizer tagOrderCustomizer() {
+        return openApi -> {
+            List<String> desiredOrder = List.of(
+                    "Tableau de bord",
+                    "Utilisateurs",
+                    "Référentiels",
+                    "Rapports",
+                    "Notifications",
+                    "Modèles d'emails",
+                    "Journal d'audit");
+            List<Tag> current = openApi.getTags();
+            if (current == null || current.isEmpty()) {
+                return;
+            }
+            List<Tag> ordered = new ArrayList<>();
+            for (String name : desiredOrder) {
+                current.stream()
+                        .filter(tag -> name.equals(tag.getName()))
+                        .findFirst()
+                        .ifPresent(ordered::add);
+            }
+            current.stream()
+                    .filter(tag -> !desiredOrder.contains(tag.getName()))
+                    .forEach(ordered::add);
+            openApi.setTags(ordered);
+        };
     }
 
     private void cleanUpSchemas(OpenAPI openApi) {

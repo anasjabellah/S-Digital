@@ -1,5 +1,8 @@
 package com.sdigital.platform.function.service;
 
+import com.sdigital.platform.audit.entity.AuditOutcome;
+import com.sdigital.platform.audit.service.AuditLogService;
+import com.sdigital.platform.common.security.CurrentActorResolver;
 import com.sdigital.platform.function.FunctionTestData;
 import com.sdigital.platform.function.dto.CreateFunctionRequest;
 import com.sdigital.platform.function.dto.FunctionResponse;
@@ -23,12 +26,14 @@ import org.springframework.data.jpa.domain.Specification;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -41,14 +46,22 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class FunctionServiceTest {
 
+    private static final UUID ACTOR_ID = UUID.fromString("33333333-3333-3333-3333-333333333333");
+
     @Mock
     private FunctionRepository functionRepository;
+
+    @Mock
+    private AuditLogService auditLogService;
+
+    @Mock
+    private CurrentActorResolver currentActorResolver;
 
     private FunctionService functionService;
 
     @BeforeEach
     void setUp() {
-        functionService = new FunctionService(functionRepository, new FunctionMapper());
+        functionService = new FunctionService(functionRepository, new FunctionMapper(), auditLogService, currentActorResolver);
     }
 
     @Test
@@ -264,12 +277,151 @@ class FunctionServiceTest {
     @Test
     void getAllCombinesSearchAndStatus() {
         Pageable pageable = PageRequest.of(0, 10);
-        when(functionRepository.findAll(any(Specification.class), any(Pageable.class)))
+        when(functionRepository.findAll(any(Specification.class), eq(pageable)))
                 .thenReturn(new PageImpl<>(List.of(), pageable, 0));
 
         functionService.getAll("  engineer ", FunctionStatus.ACTIVE, pageable);
 
         verify(functionRepository).findAll(any(Specification.class), eq(pageable));
         verify(functionRepository, never()).findAll(pageable);
+    }
+
+    // --- persistent audit ----------------------------------------------------------------------
+
+    @Test
+    void createAuditsFunctionCreated() {
+        UUID functionId = UUID.randomUUID();
+        when(functionRepository.existsByCode("F-INGE-01")).thenReturn(false);
+        when(functionRepository.save(any(Function.class))).thenAnswer(invocation -> {
+            Function saved = invocation.getArgument(0);
+            FunctionTestData.setId(saved, functionId);
+            return saved;
+        });
+        when(currentActorResolver.resolveCurrentActorUserId()).thenReturn(ACTOR_ID);
+
+        functionService.create(new CreateFunctionRequest("F-INGE-01", "Engineer 01"));
+
+        verify(auditLogService).record(eq(ACTOR_ID), eq("FUNCTION_CREATED"), eq("FUNCTION"),
+                eq(functionId.toString()), eq(AuditOutcome.SUCCESS), anyMap());
+    }
+
+    @Test
+    void updateAuditsFunctionUpdated() {
+        UUID functionId = UUID.randomUUID();
+        when(functionRepository.findById(functionId)).thenReturn(Optional.of(
+                FunctionTestData.function(functionId, "F-INGE-01", "Engineer 01", Instant.now(), Instant.now())));
+        when(functionRepository.existsByCodeAndIdNot("F-INGE-02", functionId)).thenReturn(false);
+        when(functionRepository.save(any(Function.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(currentActorResolver.resolveCurrentActorUserId()).thenReturn(ACTOR_ID);
+
+        functionService.update(functionId, new UpdateFunctionRequest("F-INGE-02", "Engineer 02"));
+
+        verify(auditLogService).record(eq(ACTOR_ID), eq("FUNCTION_UPDATED"), eq("FUNCTION"),
+                eq(functionId.toString()), eq(AuditOutcome.SUCCESS),
+                eq(Map.of("fields", List.of("code", "name"))));
+    }
+
+    @Test
+    void updateAuditsOnlyTheFieldsThatReallyChanged() {
+        UUID functionId = UUID.randomUUID();
+        when(functionRepository.findById(functionId)).thenReturn(Optional.of(
+                FunctionTestData.function(functionId, "F-INGE-01", "Engineer 01", Instant.now(), Instant.now())));
+        when(functionRepository.existsByCodeAndIdNot("F-INGE-01", functionId)).thenReturn(false);
+        when(functionRepository.save(any(Function.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        functionService.update(functionId, new UpdateFunctionRequest("F-INGE-01", "Engineer 02"));
+
+        verify(auditLogService).record(any(), eq("FUNCTION_UPDATED"), eq("FUNCTION"),
+                eq(functionId.toString()), eq(AuditOutcome.SUCCESS),
+                eq(Map.of("fields", List.of("name"))));
+    }
+
+    @Test
+    void updateThatChangesNothingWritesNoAuditEvent() {
+        UUID functionId = UUID.randomUUID();
+        when(functionRepository.findById(functionId)).thenReturn(Optional.of(
+                FunctionTestData.function(functionId, "F-INGE-01", "Engineer 01", Instant.now(), Instant.now())));
+        when(functionRepository.existsByCodeAndIdNot("F-INGE-01", functionId)).thenReturn(false);
+        when(functionRepository.save(any(Function.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        functionService.update(functionId, new UpdateFunctionRequest("F-INGE-01", "Engineer 01"));
+
+        verify(auditLogService, never()).record(any(), any(), any(), any(), any(), anyMap());
+    }
+
+    @Test
+    void deactivateAuditsFunctionDeactivatedWithStatusTransition() {
+        UUID functionId = UUID.randomUUID();
+        when(functionRepository.findById(functionId)).thenReturn(Optional.of(
+                FunctionTestData.function(functionId, "F-INGE-01", "Engineer 01", Instant.now(), Instant.now())));
+        when(functionRepository.save(any(Function.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(currentActorResolver.resolveCurrentActorUserId()).thenReturn(ACTOR_ID);
+
+        functionService.deactivate(functionId);
+
+        verify(auditLogService).record(eq(ACTOR_ID), eq("FUNCTION_DEACTIVATED"), eq("FUNCTION"),
+                eq(functionId.toString()), eq(AuditOutcome.SUCCESS),
+                eq(Map.of("previousStatus", "ACTIVE", "status", "INACTIVE")));
+    }
+
+    @Test
+    void deactivateOnAlreadyInactiveFunctionWritesNoAuditEvent() {
+        UUID functionId = UUID.randomUUID();
+        Function function = FunctionTestData.function(functionId, "F-INGE-01", "Engineer 01", Instant.now(), Instant.now());
+        function.setStatus(FunctionStatus.INACTIVE);
+        when(functionRepository.findById(functionId)).thenReturn(Optional.of(function));
+
+        functionService.deactivate(functionId);
+
+        verify(auditLogService, never()).record(any(), any(), any(), any(), any(), anyMap());
+        verify(functionRepository, never()).save(any(Function.class));
+    }
+
+    @Test
+    void activateAuditsFunctionActivatedWithStatusTransition() {
+        UUID functionId = UUID.randomUUID();
+        Function function = FunctionTestData.function(functionId, "F-INGE-01", "Engineer 01", Instant.now(), Instant.now());
+        function.setStatus(FunctionStatus.INACTIVE);
+        when(functionRepository.findById(functionId)).thenReturn(Optional.of(function));
+        when(functionRepository.save(any(Function.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(currentActorResolver.resolveCurrentActorUserId()).thenReturn(null);
+
+        functionService.activate(functionId);
+
+        verify(auditLogService).record(eq(null), eq("FUNCTION_ACTIVATED"), eq("FUNCTION"),
+                eq(functionId.toString()), eq(AuditOutcome.SUCCESS),
+                eq(Map.of("previousStatus", "INACTIVE", "status", "ACTIVE")));
+    }
+
+    @Test
+    void activateOnAlreadyActiveFunctionWritesNoAuditEvent() {
+        UUID functionId = UUID.randomUUID();
+        when(functionRepository.findById(functionId)).thenReturn(Optional.of(
+                FunctionTestData.function(functionId, "F-INGE-01", "Engineer 01", Instant.now(), Instant.now())));
+
+        functionService.activate(functionId);
+
+        verify(auditLogService, never()).record(any(), any(), any(), any(), any(), anyMap());
+        verify(functionRepository, never()).save(any(Function.class));
+    }
+
+    @Test
+    void failedMutationWritesNoAuditEvent() {
+        when(functionRepository.existsByCode("F-INGE-01")).thenReturn(true);
+
+        assertThatThrownBy(() -> functionService.create(new CreateFunctionRequest("F-INGE-01", "Engineer 01")))
+                .isInstanceOf(FunctionCodeAlreadyUsedException.class);
+
+        verify(auditLogService, never()).record(any(), any(), any(), any(), any(), anyMap());
+    }
+
+    @Test
+    void readOperationsWriteNoAuditEvent() {
+        Pageable pageable = PageRequest.of(0, 10);
+        when(functionRepository.findAll(pageable)).thenReturn(new PageImpl<>(List.of(), pageable, 0));
+
+        functionService.getAll(pageable);
+
+        verify(auditLogService, never()).record(any(), any(), any(), any(), any(), anyMap());
     }
 }

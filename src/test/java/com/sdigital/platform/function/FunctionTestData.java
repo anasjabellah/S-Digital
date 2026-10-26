@@ -31,6 +31,16 @@ public final class FunctionTestData {
         return function;
     }
 
+    /**
+     * Assigns the identifier that the JPA lifecycle would normally generate on save.
+     *
+     * <p>Used by service tests that stub the repository: the audited code reads the
+     * identifier of the saved entity, so the fixture must expose one.</p>
+     */
+    public static void setId(Function function, UUID id) {
+        setField(function, "id", id);
+    }
+
     private static void setField(Function function, String fieldName, Object value) {
         try {
             Field field = Function.class.getDeclaredField(fieldName);

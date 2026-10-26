@@ -1,5 +1,9 @@
 package com.sdigital.platform.function.service;
 
+import com.sdigital.platform.audit.entity.AuditOutcome;
+import com.sdigital.platform.audit.service.AuditChanges;
+import com.sdigital.platform.audit.service.AuditLogService;
+import com.sdigital.platform.common.security.CurrentActorResolver;
 import com.sdigital.platform.function.dto.CreateFunctionRequest;
 import com.sdigital.platform.function.dto.FunctionResponse;
 import com.sdigital.platform.function.dto.UpdateFunctionRequest;
@@ -16,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -28,12 +33,26 @@ import java.util.UUID;
 @Service
 public class FunctionService {
 
+    private static final String AUDIT_ENTITY_FUNCTION = "FUNCTION";
+
+    private static final String ACTION_FUNCTION_CREATED = "FUNCTION_CREATED";
+    private static final String ACTION_FUNCTION_UPDATED = "FUNCTION_UPDATED";
+    private static final String ACTION_FUNCTION_DEACTIVATED = "FUNCTION_DEACTIVATED";
+    private static final String ACTION_FUNCTION_ACTIVATED = "FUNCTION_ACTIVATED";
+
     private final FunctionRepository functionRepository;
     private final FunctionMapper functionMapper;
+    private final AuditLogService auditLogService;
+    private final CurrentActorResolver currentActorResolver;
 
-    public FunctionService(FunctionRepository functionRepository, FunctionMapper functionMapper) {
+    public FunctionService(FunctionRepository functionRepository,
+                           FunctionMapper functionMapper,
+                           AuditLogService auditLogService,
+                           CurrentActorResolver currentActorResolver) {
         this.functionRepository = functionRepository;
         this.functionMapper = functionMapper;
+        this.auditLogService = auditLogService;
+        this.currentActorResolver = currentActorResolver;
     }
 
     @Transactional
@@ -41,7 +60,10 @@ public class FunctionService {
         CreateFunctionRequest normalized = normalize(request);
         ensureCodeAvailable(normalized.code(), null);
         Function function = functionMapper.toEntity(normalized);
-        return functionMapper.toResponse(functionRepository.save(function));
+        Function saved = functionRepository.save(function);
+        auditLogService.record(resolveActorUserId(), ACTION_FUNCTION_CREATED, AUDIT_ENTITY_FUNCTION,
+                entityIdOf(saved.getId()), AuditOutcome.SUCCESS, Map.of("status", saved.getStatus().name()));
+        return functionMapper.toResponse(saved);
     }
 
     @Transactional(readOnly = true)
@@ -72,35 +94,78 @@ public class FunctionService {
         Function function = findFunctionOrThrow(id);
         UpdateFunctionRequest normalized = normalize(request);
         ensureCodeAvailable(normalized.code(), id);
+        AuditChanges changes = new AuditChanges()
+                .track("code", function.getCode(), normalized.code())
+                .track("name", function.getName(), normalized.name());
         functionMapper.applyUpdate(function, normalized);
-        return functionMapper.toResponse(functionRepository.save(function));
+        Function saved = functionRepository.save(function);
+        if (!changes.isEmpty()) {
+            auditLogService.record(resolveActorUserId(), ACTION_FUNCTION_UPDATED, AUDIT_ENTITY_FUNCTION,
+                    entityIdOf(saved.getId()), AuditOutcome.SUCCESS, Map.of("fields", changes.fields()));
+        }
+        return functionMapper.toResponse(saved);
     }
 
     /**
      * Deactivates a function by setting its status to {@link FunctionStatus#INACTIVE}.
      * The row is never deleted.
+     *
+     * <p>A function that is already inactive is left untouched and produces no audit event:
+     * the audit trail only records effective mutations.</p>
      */
     @Transactional
     public FunctionResponse deactivate(UUID id) {
         Function function = findFunctionOrThrow(id);
+        FunctionStatus previousStatus = function.getStatus();
+        if (previousStatus == FunctionStatus.INACTIVE) {
+            return functionMapper.toResponse(function);
+        }
         function.setStatus(FunctionStatus.INACTIVE);
-        return functionMapper.toResponse(functionRepository.save(function));
+        Function saved = functionRepository.save(function);
+        auditLogService.record(resolveActorUserId(), ACTION_FUNCTION_DEACTIVATED, AUDIT_ENTITY_FUNCTION,
+                entityIdOf(saved.getId()), AuditOutcome.SUCCESS,
+                Map.of("previousStatus", previousStatus.name(), "status", saved.getStatus().name()));
+        return functionMapper.toResponse(saved);
     }
 
     /**
      * Reactivates a function by setting its status to {@link FunctionStatus#ACTIVE}.
      * The row is never created nor deleted, and no other field is touched.
+     *
+     * <p>A function that is already active is left untouched and produces no audit event:
+     * the audit trail only records effective mutations.</p>
      */
     @Transactional
     public FunctionResponse activate(UUID id) {
         Function function = findFunctionOrThrow(id);
+        FunctionStatus previousStatus = function.getStatus();
+        if (previousStatus == FunctionStatus.ACTIVE) {
+            return functionMapper.toResponse(function);
+        }
         function.setStatus(FunctionStatus.ACTIVE);
-        return functionMapper.toResponse(functionRepository.save(function));
+        Function saved = functionRepository.save(function);
+        auditLogService.record(resolveActorUserId(), ACTION_FUNCTION_ACTIVATED, AUDIT_ENTITY_FUNCTION,
+                entityIdOf(saved.getId()), AuditOutcome.SUCCESS,
+                Map.of("previousStatus", previousStatus.name(), "status", saved.getStatus().name()));
+        return functionMapper.toResponse(saved);
     }
 
     private Function findFunctionOrThrow(UUID id) {
         return functionRepository.findById(id)
                 .orElseThrow(() -> new FunctionNotFoundException(id));
+    }
+
+    private UUID resolveActorUserId() {
+        return currentActorResolver.resolveCurrentActorUserId();
+    }
+
+    /**
+     * Converts a local identifier into its audit string form. The identifier is always
+     * present in production (the JPA lifecycle assigns it on save), but a null is tolerated
+     * so a missing identifier can never break the audited mutation itself.
+     */
+    private static String entityIdOf(UUID id) {
+        return id == null ? null : id.toString();
     }
 
     private void ensureCodeAvailable(String code, UUID excludedId) {

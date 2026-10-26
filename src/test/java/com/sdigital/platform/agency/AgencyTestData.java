@@ -31,6 +31,16 @@ public final class AgencyTestData {
         return agency;
     }
 
+    /**
+     * Assigns the identifier that the JPA lifecycle would normally generate on save.
+     *
+     * <p>Used by service tests that stub the repository: the audited code reads the
+     * identifier of the saved entity, so the fixture must expose one.</p>
+     */
+    public static void setId(Agency agency, UUID id) {
+        setField(agency, "id", id);
+    }
+
     private static void setField(Agency agency, String fieldName, Object value) {
         try {
             Field field = Agency.class.getDeclaredField(fieldName);

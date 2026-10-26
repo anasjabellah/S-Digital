@@ -49,7 +49,7 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/api/v1/functions")
-@Tag(name = "Functions", description = "Create, read, update and deactivate business functions.")
+@Tag(name = "Référentiels", description = "Référentiels de la plateforme (fonctions métiers).")
 public class FunctionController {
 
     private static final String ID_EXAMPLE = "3fa85f64-5717-4562-b3fc-2c963f66afa6";

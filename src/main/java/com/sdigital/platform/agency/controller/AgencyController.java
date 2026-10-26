@@ -49,7 +49,7 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/api/v1/agencies")
-@Tag(name = "Agencies", description = "Create, read, update and deactivate platform agencies.")
+@Tag(name = "Référentiels", description = "Référentiels de la plateforme (agences).")
 public class AgencyController {
 
     private static final String ID_EXAMPLE = "3fa85f64-5717-4562-b3fc-2c963f66afa6";
@@ -75,9 +75,9 @@ public class AgencyController {
         }
     }
 
-    @Operation(summary = "Create an agency",
-            description = "Creates a new agency in ACTIVE status. The response carries a "
-                    + "`Location` header pointing to the created resource.")
+    @Operation(summary = "Créer une agence",
+            description = "Crée une nouvelle agence avec le statut ACTIVE. La réponse comporte un "
+                    + "en-tête `Location` pointant vers la ressource créée.")
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Agency created"),
             @ApiResponse(responseCode = "400", description = "Invalid or unreadable request body",
@@ -95,7 +95,7 @@ public class AgencyController {
         return ResponseEntity.created(location).body(created);
     }
 
-    @Operation(summary = "Get an agency by id", description = "Returns a single agency by its UUID.")
+    @Operation(summary = "Consulter une agence", description = "Retourne une agence par son UUID.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Agency found"),
             @ApiResponse(responseCode = "400", description = "Malformed agency id",
@@ -117,14 +117,14 @@ public class AgencyController {
      * globally through {@code spring.data.web.pageable.max-page-size}. Optional
      * multicriteria filters ({@code search}, {@code status}) narrow the listing.
      */
-    @Operation(summary = "List agencies",
-            description = "Returns a paginated list of agencies. Pagination and sorting are bound by "
-                    + "Spring Data: `page` (0-based, default 0) and `size` (default 20, capped at 100); "
-                    + "non-numeric values fall back to their default. `sort` uses `property,asc|desc` and "
-                    + "must reference an existing agency property (e.g. `code`, `createdAt`); "
-                    + "default `createdAt,desc`. Optional filters can be combined: `search` is a "
-                    + "case-insensitive partial match on code and name; `status` is an exact match "
-                    + "on ACTIVE or INACTIVE.")
+    @Operation(summary = "Lister les agences",
+            description = "Retourne une liste paginée d'agences. La pagination et le tri sont encadrés par "
+                    + "Spring Data : `page` (base 0, défaut 0) et `size` (défaut 20, plafonné à 100) ; "
+                    + "les valeurs non numériques reviennent à leur défaut. `sort` utilise `property,asc|desc` et "
+                    + "doit référencer une propriété d'agence existante (par ex. `code`, `createdAt`) ; "
+                    + "défaut `createdAt,desc`. Des filtres optionnels peuvent être combinés : `search` est une "
+                    + "correspondance partielle insensible à la casse sur le code et le nom ; `status` est une "
+                    + "correspondance exacte sur ACTIVE ou INACTIVE.")
     @Parameters({
             @Parameter(name = "page", in = ParameterIn.QUERY, description = "Zero-based page index.", example = "0"),
             @Parameter(name = "size", in = ParameterIn.QUERY, description = "Page size (default 20, maximum 100).", example = "20"),
@@ -149,9 +149,9 @@ public class AgencyController {
         return agencyService.getAll(search, status, pageable);
     }
 
-    @Operation(summary = "Update an agency",
-            description = "Replaces the mutable fields (code, name). The agency status is "
-                    + "not modified by this operation.")
+    @Operation(summary = "Mettre à jour une agence",
+            description = "Remplace les champs modifiables (code, nom). Le statut de l'agence n'est "
+                    + "pas modifié par cette opération.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Agency updated"),
             @ApiResponse(responseCode = "400", description = "Malformed agency id or invalid request body",
@@ -173,9 +173,9 @@ public class AgencyController {
     /**
      * Logical deactivation: the agency status becomes {@code INACTIVE}. The row is kept.
      */
-    @Operation(summary = "Deactivate an agency",
-            description = "Logical deletion: the status becomes INACTIVE and the row is kept. "
-                    + "No response body is returned.")
+    @Operation(summary = "Désactiver une agence",
+            description = "Désactivation logique : le statut passe à INACTIVE et la ligne est conservée. "
+                    + "Aucun corps de réponse n'est retourné.")
     @ApiResponses({
             @ApiResponse(responseCode = "204", description = "Agency deactivated"),
             @ApiResponse(responseCode = "400", description = "Malformed agency id",
@@ -192,9 +192,9 @@ public class AgencyController {
         return ResponseEntity.noContent().build();
     }
 
-    @Operation(summary = "Activate an agency",
-            description = "Reactivates a deactivated agency: the status becomes ACTIVE again. "
-                    + "No row is created.")
+    @Operation(summary = "Réactiver une agence",
+            description = "Réactive une agence désactivée : le statut redevient ACTIVE. "
+                    + "Aucune ligne n'est créée.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Agency activated"),
             @ApiResponse(responseCode = "400", description = "Malformed agency id",

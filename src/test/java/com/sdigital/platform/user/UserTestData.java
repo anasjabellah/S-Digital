@@ -34,6 +34,16 @@ public final class UserTestData {
         return user;
     }
 
+    /**
+     * Assigns the identifier that the JPA lifecycle would normally generate on save.
+     *
+     * <p>Used by service tests that stub the repository: the audited code reads the
+     * identifier of the saved entity, so the fixture must expose one.</p>
+     */
+    public static void setId(User user, UUID id) {
+        setField(user, "id", id);
+    }
+
     private static void setField(User user, String fieldName, Object value) {
         try {
             Field field = User.class.getDeclaredField(fieldName);
